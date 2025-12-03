@@ -1,8 +1,8 @@
 import streamlit as st
 import json
 import os
-from pydantic import BaseModel, Field, ValidationError
-from typing import List, Optional
+from pydantic import BaseModel
+from typing import List
 from gtts import gTTS
 import io
 from openai import OpenAI
@@ -60,13 +60,14 @@ def get_hf_client():
     """
     Creates a client that talks to HuggingFace Router using OpenAI-compatible API.
     Token is never exposed to frontend.
+    You must set HF_TOKEN in Streamlit secrets.
     """
     return OpenAI(
         base_url="https://router.huggingface.co/v1",
-        api_key=st.secrets["HF_TOKEN"],  # stored securely in Streamlit Secrets
+        api_key=st.secrets["HF_TOKEN"],
     )
 
-def hf_generate(prompt: str, max_new_tokens: int = 300, temperature: float = 0.4):
+def hf_generate(prompt: str, max_new_tokens: int = 300, temperature: float = 0.4) -> str:
     """
     Unified LLM call via HF Router.
     """
@@ -74,7 +75,7 @@ def hf_generate(prompt: str, max_new_tokens: int = 300, temperature: float = 0.4
 
     try:
         completion = client.chat.completions.create(
-            model="HuggingFaceTB/SmolLM3-3B:hf-inference",  # HF small instruct model (free)
+            model="HuggingFaceTB/SmolLM3-3B:hf-inference",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_new_tokens,
             temperature=temperature,
@@ -89,6 +90,7 @@ def hf_generate(prompt: str, max_new_tokens: int = 300, temperature: float = 0.4
 # ============================================================
 class CognitiveEngine:
     def __init__(self):
+        # This file will be created at runtime – no need to commit it to Git
         self.memory_file = "long_term_memory.json"
 
     def extract_profile(self, history):
@@ -96,12 +98,16 @@ class CognitiveEngine:
 
         prompt = f"""
 You are an AI Memory Architect.
-Extract long-term memory from the chat history below.
+
+From the chat history below, extract long-term memory and return it in JSON.
 
 CHAT LOG:
 {history_text}
 
-Return ONLY valid JSON:
+Your entire response MUST be ONLY a single valid JSON object.
+Do NOT include any explanations, thoughts, analysis, comments, or <think> tags.
+Do NOT wrap it in markdown.
+Just output JSON exactly like:
 
 {{
   "user_preferences": ["...", "..."],
@@ -112,17 +118,25 @@ Return ONLY valid JSON:
 
         raw = hf_generate(prompt, temperature=0.2)
 
-        # extract JSON safely
+        # ---- Robust JSON extraction ----
         try:
-            json_str = raw[raw.index("{"): raw.rindex("}") + 1]
+            start = raw.find("{")
+            end = raw.rfind("}")
+
+            if start == -1 or end == -1:
+                st.error(f"❌ Model did not return JSON.\nRaw output:\n{raw}")
+                return None
+
+            json_str = raw[start:end + 1]
             data = json.loads(json_str)
-            return UserProfile(**data)
+            profile = UserProfile(**data)
+            return profile
 
         except Exception as e:
-            st.error(f"❌ JSON parsing failed.\nRaw output:\n{raw}\n\nError:\n{e}")
+            st.error(f"❌ JSON parsing/validation failed.\nRaw output:\n{raw}\n\nError:\n{e}")
             return None
 
-    def save(self, profile):
+    def save(self, profile: UserProfile):
         with open(self.memory_file, "w") as f:
             f.write(profile.model_dump_json(indent=2))
 
@@ -135,7 +149,6 @@ Return ONLY valid JSON:
 # ============================================================
 # PERSONA ENGINE
 # ============================================================
-
 def persona_instructions(persona: str) -> str:
     return {
         "Calm Mentor": "Speak slowly, gently, encouragingly. Validate feelings and provide simple next steps.",
@@ -145,7 +158,7 @@ def persona_instructions(persona: str) -> str:
         "Neutral": "Respond plainly, factually, without any stylistic flavor."
     }[persona]
 
-def generate_reply(user_msg: str, profile: UserProfile, persona="Neutral"):
+def generate_reply(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str:
     memory_block = f"""
 User Preferences: {profile.user_preferences}
 Emotional Patterns: {profile.emotional_patterns}
@@ -179,14 +192,14 @@ Assistant:
 # ============================================================
 # TEXT TO SPEECH (Optional)
 # ============================================================
-def tts(text):
+def tts(text: str):
     try:
         obj = gTTS(text=text, lang="en")
         fp = io.BytesIO()
         obj.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except:
+    except Exception:
         return None
 
 # ============================================================
@@ -194,7 +207,7 @@ def tts(text):
 # ============================================================
 def main():
     st.title("🧠 NeuroSync — Agentic Memory & Personality Engine (HuggingFace Edition)")
-    st.caption("Fully free. Powered by open-source models. Token stored securely in backend.")
+    st.caption("Fully free. Powered by HuggingFace Router. HF token is stored only in backend secrets.")
 
     brain = CognitiveEngine()
 
@@ -205,6 +218,7 @@ def main():
 
     col1, col2 = st.columns(2)
 
+    # Left: raw history + button
     with col1:
         with st.expander("📄 View Chat History"):
             st.code(CHAT_HISTORY_30)
@@ -215,8 +229,9 @@ def main():
                 if profile:
                     brain.save(profile)
                     st.session_state["profile"] = profile
-                    st.success("Memory extracted and saved!")
+                    st.success("✅ Memory extracted and saved!")
 
+    # Right: memory card
     with col2:
         if "profile" not in st.session_state:
             loaded = brain.load()
@@ -234,7 +249,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("No memory extracted yet.")
+            st.info("No memory extracted yet. Click 'Extract Memory' to run the pipeline.")
 
     st.divider()
 
@@ -243,15 +258,17 @@ def main():
     # ========================================================
     st.subheader("2. Persona Engine — Before / After Response")
 
-    persona = st.selectbox("Choose persona:", [
-        "Calm Mentor", "Witty Peer", "Therapist-style Guide", "No-Nonsense CTO"
-    ])
+    persona = st.selectbox(
+        "Choose persona:",
+        ["Calm Mentor", "Witty Peer", "Therapist-style Guide", "No-Nonsense CTO"]
+    )
 
     user_input = st.chat_input("Say something (e.g., 'I'm stressed about Q4 deadlines')")
 
     if user_input and "profile" in st.session_state:
         profile = st.session_state["profile"]
 
+        # Neutral vs Persona responses
         neutral = generate_reply(user_input, profile, persona="Neutral")
         styled = generate_reply(user_input, profile, persona=persona)
 
@@ -271,6 +288,5 @@ def main():
                 if audio:
                     st.audio(audio, format="audio/mp3")
 
-# ============================================================
 if __name__ == "__main__":
     main()
