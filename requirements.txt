@@ -2,3 +2,5 @@ streamlit
 pydantic>=2.0.0
 requests
 gTTS
+huggingface-hub>=0.23.0
+langchain-huggingface>=0.0.3
