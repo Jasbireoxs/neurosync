@@ -8,7 +8,7 @@ import io
 from openai import OpenAI
 
 # ============================================================
-#  UI CONFIG
+# UI CONFIG
 # ============================================================
 st.set_page_config(
     layout="wide",
@@ -16,7 +16,7 @@ st.set_page_config(
     page_icon="🧠"
 )
 
-# Stealth UI theme
+# Stealth UI Theme
 st.markdown("""
 <style>
     .stApp { background-color: #0E1117; color: #FAFAFA; }
@@ -28,7 +28,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# CHAT HISTORY (Assignment Input Data)
+# CHAT HISTORY (Assignment Data)
 # ============================================================
 CHAT_HISTORY_30 = [
     "I'm just setting up my dev environment.", "I hate cluttered UIs, keep it minimal.",
@@ -49,7 +49,7 @@ CHAT_HISTORY_30 = [
 ]
 
 # ============================================================
-# MEMORY SCHEMA
+# MEMORY SCHEMA (Pydantic)
 # ============================================================
 class UserProfile(BaseModel):
     user_preferences: List[str]
@@ -62,18 +62,18 @@ class UserProfile(BaseModel):
 
 @st.cache_resource
 def get_hf_client():
-    """Create OpenAI-compatible HF Router client."""
+    """Uses the OpenAI Python SDK to call HuggingFace Router."""
     return OpenAI(
         base_url="https://router.huggingface.co/v1",
-        api_key=st.secrets["HF_TOKEN"],  # Stored ONLY in backend
+        api_key=st.secrets["HF_TOKEN"],
     )
 
 def hf_generate(prompt: str, max_tokens=400, temperature=0.2) -> str:
-    """Unified LLM call using Llama 3.2 3B Instruct."""
+    """Single call to Zephyr-7B-Beta via HF Router."""
     client = get_hf_client()
     try:
         completion = client.chat.completions.create(
-            model="meta-llama/Llama-3.2-3B-Instruct:hf-inference",
+            model="HuggingFaceH4/zephyr-7b-beta",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=temperature,
@@ -86,25 +86,23 @@ def hf_generate(prompt: str, max_tokens=400, temperature=0.2) -> str:
 # ============================================================
 # MEMORY EXTRACTION ENGINE
 # ============================================================
-
 class CognitiveEngine:
     def __init__(self):
-        self.memory_file = "long_term_memory.json"  # auto-created
+        self.memory_file = "long_term_memory.json"  # Created at runtime
 
     def extract_profile(self, history):
-        history_text = "\n".join(f"- {m}" for m in history)
+        history_text = "\n".join(f"- {msg}" for msg in history)
 
         prompt = f"""
 You are a Memory Architect AI.
 
-Your task:
-Return ONLY a valid JSON object. 
-NO prose, NO explanation, NO <think>, NO notes.
+Return ONLY a valid JSON object.
+No commentary. No <think>. No explanations.
 
 CHAT LOG:
 {history_text}
 
-FORMAT (mandatory):
+EXPECTED FORMAT:
 {{
   "user_preferences": ["...", "..."],
   "emotional_patterns": "string",
@@ -114,7 +112,7 @@ FORMAT (mandatory):
 
         raw = hf_generate(prompt, temperature=0.1)
 
-        # --- Strip hidden <think> reasoning blocks ---
+        # ---- Remove <think> blocks ----
         while "<think>" in raw and "</think>" in raw:
             s = raw.find("<think>")
             e = raw.find("</think>") + len("</think>")
@@ -122,22 +120,22 @@ FORMAT (mandatory):
 
         raw = raw.strip()
 
-        # --- Extract JSON safely ---
+        # ---- Extract pure JSON ----
         try:
             start = raw.find("{")
             end = raw.rfind("}")
 
             if start == -1 or end == -1:
-                st.error(f"❌ Model did not output JSON.\n\nCleaned output:\n{raw}")
+                st.error(f"❌ Model did not return JSON.\n\nOutput:\n{raw}")
                 return None
 
             json_str = raw[start:end + 1]
-
             data = json.loads(json_str)
+
             return UserProfile(**data)
 
         except Exception as e:
-            st.error(f"❌ JSON parsing failed.\n\nOutput:\n{raw}\n\nError:\n{e}")
+            st.error(f"❌ JSON parsing failed.\nOutput:\n{raw}\n\nError:\n{e}")
             return None
 
     def save(self, profile: UserProfile):
@@ -153,17 +151,17 @@ FORMAT (mandatory):
 # ============================================================
 # PERSONA ENGINE
 # ============================================================
-
-def persona_rules(persona: str) -> str:
+def persona_rules(persona: str):
     return {
-        "Calm Mentor": "Gentle, warm, validating, short steps.",
-        "Witty Peer": "Playful, casual, lightly humorous.",
-        "Therapist-style Guide": "Reflect feelings, ask gentle questions, supportive.",
-        "No-Nonsense CTO": "Direct, concise, prioritization-focused, action-driven.",
+        "Calm Mentor": "Warm, gentle, validating. Provide small actionable steps.",
+        "Witty Peer": "Casual, playful, lightly humorous.",
+        "Therapist-style Guide": "Reflect feelings, ask gentle guiding questions.",
+        "No-Nonsense CTO": "Direct, concise, action-first, ruthless prioritization.",
         "Neutral": "Plain, factual, minimal style."
     }[persona]
 
-def generate_reply(user_msg: str, profile: UserProfile, persona="Neutral") -> str:
+
+def generate_reply(user_msg: str, profile: UserProfile, persona="Neutral"):
     memory_block = f"""
 User Preferences: {profile.user_preferences}
 Emotional Patterns: {profile.emotional_patterns}
@@ -182,10 +180,11 @@ PERSONA = {persona}
 PERSONA_TRAITS = {persona_desc}
 
 RULES:
-- Respect user's preferences STRICTLY.
-- Adapt tone to emotional patterns.
+- Respect user's preferences strictly.
+- Adapt tone to emotional baseline.
 - Use facts naturally, not creepily.
-- No emojis unless user requests them.
+- No emojis unless user prefers them.
+- Keep response focused.
 
 User: {user_msg}
 Assistant:
@@ -196,12 +195,11 @@ Assistant:
 # ============================================================
 # OPTIONAL TTS
 # ============================================================
-
-def tts(text):
+def tts(text: str):
     try:
-        speech = gTTS(text=text, lang="en")
+        obj = gTTS(text=text, lang="en")
         fp = io.BytesIO()
-        speech.write_to_fp(fp)
+        obj.write_to_fp(fp)
         fp.seek(0)
         return fp
     except:
@@ -210,33 +208,34 @@ def tts(text):
 # ============================================================
 # MAIN APP
 # ============================================================
-
 def main():
-    st.title("🧠 NeuroSync — Agentic Memory & Personality Engine (HF Edition)")
-    st.caption("100% free. Powered by Llama 3.2–3B via HuggingFace Router.")
+    st.title("🧠 NeuroSync — Agentic Memory & Personality Engine (Zephyr Edition)")
+    st.caption("Powered by HuggingFace Router. 100% free. No OpenAI keys needed.")
 
     brain = CognitiveEngine()
 
     # ---------------------------------------------------------
     # MEMORY EXTRACTION
     # ---------------------------------------------------------
-    st.subheader("1. Extract User Memory (30 Messages)")
+    st.subheader("1. Extract Structured Long-Term Memory")
 
     col1, col2 = st.columns(2)
 
+    # Left: raw history + extraction
     with col1:
         with st.expander("📄 View Chat History"):
             st.code(CHAT_HISTORY_30)
 
         if st.button("🚀 Extract Memory", use_container_width=True):
-            with st.spinner("Extracting memory using Llama 3.2–3B…"):
+            with st.spinner("Extracting memory using Zephyr-7B…"):
                 profile = brain.extract_profile(CHAT_HISTORY_30)
 
                 if profile:
                     brain.save(profile)
                     st.session_state["profile"] = profile
-                    st.success("Memory extracted & saved!")
+                    st.success("🎉 Memory extracted successfully!")
 
+    # Right: display memory
     with col2:
         if "profile" not in st.session_state:
             loaded = brain.load()
@@ -254,21 +253,21 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("Run the extraction to build memory.")
+            st.info("Click 'Extract Memory' to begin.")
 
     st.divider()
 
     # ---------------------------------------------------------
-    # PERSONA ENGINE — INTERACTION
+    # PERSONA ENGINE
     # ---------------------------------------------------------
-    st.subheader("2. Persona Engine: Before / After Comparison")
+    st.subheader("2. Persona Engine — Compare Responses")
 
     persona = st.selectbox(
-        "Choose persona:",
+        "Select persona:",
         ["Calm Mentor", "Witty Peer", "Therapist-style Guide", "No-Nonsense CTO"]
     )
 
-    user_msg = st.chat_input("Ask something… (e.g., 'I'm stressed about deadlines')")
+    user_msg = st.chat_input("Type a message (e.g., 'I'm stressed about deadlines')")
 
     if user_msg and "profile" in st.session_state:
         profile = st.session_state["profile"]
@@ -276,14 +275,14 @@ def main():
         neutral = generate_reply(user_msg, profile, persona="Neutral")
         styled = generate_reply(user_msg, profile, persona=persona)
 
-        left, right = st.columns(2)
+        colA, colB = st.columns(2)
 
-        with left:
+        with colA:
             with st.chat_message("assistant"):
                 st.markdown("### 🔹 Neutral Response")
                 st.write(neutral)
 
-        with right:
+        with colB:
             with st.chat_message("assistant"):
                 st.markdown(f"### 🔸 Persona: {persona}")
                 st.write(styled)
