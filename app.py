@@ -67,24 +67,37 @@ class CognitiveEngine:
 
         for msg in history:
             lower = msg.lower()
-            if "minimal" in lower: prefs.add("Prefers minimal UIs")
-            if "snake_case" in lower: prefs.add("Prefers snake_case")
-            if "no long explanations" in lower: prefs.add("Wants concise answers")
-            if "skip the basics" in lower: prefs.add("Senior-level (skip basics)")
-            if "postgresql" in lower: prefs.add("Prefers PostgreSQL")
-            if "linux" in lower: prefs.add("Linux user")
-            
-            if "anxious" in lower: emotion_flags.append("anxiety")
-            if "impostor syndrome" in lower: emotion_flags.append("impostor syndrome")
-            if "overwhelmed" in lower: emotion_flags.append("overwhelmed")
-            
-            if "barnaby" in lower: facts.add("Has dog named Barnaby")
-            if "seattle" in lower: facts.add("Lives in Seattle (PST)")
-            if "titanapi" in lower: facts.add("Project: TitanAPI")
-            if "cto" in lower: facts.add("Goal: Become CTO")
+            if "minimal" in lower:
+                prefs.add("Prefers minimal UIs")
+            if "snake_case" in lower:
+                prefs.add("Prefers snake_case")
+            if "no long explanations" in lower:
+                prefs.add("Wants concise answers")
+            if "skip the basics" in lower:
+                prefs.add("Senior-level (skip basics)")
+            if "postgresql" in lower:
+                prefs.add("Prefers PostgreSQL")
+            if "linux" in lower:
+                prefs.add("Linux user")
+
+            if "anxious" in lower:
+                emotion_flags.append("anxiety")
+            if "impostor syndrome" in lower:
+                emotion_flags.append("impostor syndrome")
+            if "overwhelmed" in lower:
+                emotion_flags.append("overwhelmed")
+
+            if "barnaby" in lower:
+                facts.add("Has dog named Barnaby")
+            if "seattle" in lower:
+                facts.add("Lives in Seattle (PST)")
+            if "titanapi" in lower:
+                facts.add("Project: TitanAPI")
+            if "cto" in lower:
+                facts.add("Goal: Become CTO")
 
         emo_summary = "Stable" if not emotion_flags else f"Recurring: {', '.join(set(emotion_flags))}"
-        
+
         return UserProfile(
             user_preferences=sorted(prefs),
             emotional_patterns=emo_summary,
@@ -111,20 +124,22 @@ def get_client():
     except Exception:
         return None
 
-def generate_reply_cloud(user_msg, profile: UserProfile, persona: str):
+def generate_reply_cloud(user_msg: str, profile: UserProfile, persona: str) -> str:
     client = get_client()
     if not client:
         return "⚠️ Error: HF_TOKEN not found in secrets."
 
+    # Models to try (in order)
     MODELS_CONFIG = [
         {"id": "Qwen/Qwen2.5-7B-Instruct", "mode": "chat"},
         {"id": "mistralai/Mistral-7B-Instruct-v0.2", "mode": "text"},
         {"id": "google/flan-t5-large", "mode": "text"},
-        {"id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "mode": "text"}
+        {"id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "mode": "text"},
     ]
 
     system_text = f"""
-You are GuppShupp.
+You are GuppShupp, a lifelong AI friend.
+
 Persona: {persona}
 User Memory:
 - Preferences: {', '.join(profile.user_preferences)}
@@ -133,8 +148,9 @@ User Memory:
 
 Task:
 Reply to the user in a way that fits the persona.
-Keep it short, respect their preferences (likes concise answers, minimal fluff),
-and adapt to their emotional patterns.
+Keep it short and natural.
+Respect their preferences (they like concise answers, minimal fluff).
+Adapt to their emotional patterns.
 """
 
     last_error = ""
@@ -178,7 +194,7 @@ and adapt to their emotional patterns.
     return f"⚠️ All Models Failed. Please check your HF_TOKEN permissions. Last Error: {last_error}"
 
 # ============================================================
-# MAIN APP (Old UI structure)
+# MAIN APP (Old UI + Before/After Comparison)
 # ============================================================
 def main():
     # --- SIDEBAR ---
@@ -204,8 +220,8 @@ def main():
         """
 **Objective:**  
 1. Extract structured memory from a 30-message history.  
-2. Use that memory to drive a cloud-backed persona engine.  
-3. Show how GuppShupp adapts tone per persona.
+2. Use that memory to drive a cloud-backed Personality Engine.  
+3. Show how GuppShupp’s tone changes by persona.
 """,
         unsafe_allow_html=True,
     )
@@ -252,9 +268,9 @@ def main():
     st.divider()
 
     # ========================================================
-    # 2. INTERACTION LAYER · PERSONA ENGINE
+    # 2. INTERACTION LAYER · BEFORE / AFTER PERSONA
     # ========================================================
-    st.subheader(f"2. Interaction Layer · {persona}")
+    st.subheader(f"2. Interaction Layer · Before / After Persona ({persona})")
 
     if "profile" not in st.session_state:
         st.warning("Please run the Memory Extraction first so GuppShupp knows you.")
@@ -265,25 +281,37 @@ def main():
     user_input = st.chat_input("Talk to GuppShupp (e.g., 'I’m stressed about Q4', 'I feel lonely tonight')")
 
     if user_input:
-        # User message
+        # User message shown once
         with st.chat_message("user"):
             st.write(user_input)
 
-        # Assistant response
-        with st.chat_message("assistant"):
-            with st.spinner("GuppShupp is thinking in the cloud..."):
-                reply = generate_reply_cloud(user_input, profile, persona)
-                st.write(reply)
+        col_neutral, col_persona = st.columns(2)
 
-                if enable_voice:
-                    try:
-                        tts = gTTS(reply)
-                        fp = io.BytesIO()
-                        tts.write_to_fp(fp)
-                        fp.seek(0)
-                        st.audio(fp, format="audio/mp3")
-                    except Exception:
-                        pass
+        # --- Neutral / baseline reply ---
+        with col_neutral:
+            with st.chat_message("assistant"):
+                st.markdown("### 🔹 Baseline (Neutral GuppShupp)")
+                with st.spinner("Thinking (neutral)..."):
+                    neutral_reply = generate_reply_cloud(user_input, profile, "Neutral")
+                    st.write(neutral_reply)
+
+        # --- Persona reply ---
+        with col_persona:
+            with st.chat_message("assistant"):
+                st.markdown(f"### 🔸 Persona: {persona}")
+                with st.spinner("Thinking with personality..."):
+                    persona_reply = generate_reply_cloud(user_input, profile, persona)
+                    st.write(persona_reply)
+
+                    if enable_voice:
+                        try:
+                            tts = gTTS(persona_reply)
+                            fp = io.BytesIO()
+                            tts.write_to_fp(fp)
+                            fp.seek(0)
+                            st.audio(fp, format="audio/mp3")
+                        except Exception:
+                            pass
 
         # X-Ray / Debug prompt injection
         with st.expander("🛠️ X-Ray: Injected Memory & Persona"):
