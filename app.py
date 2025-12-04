@@ -6,6 +6,13 @@ from typing import List
 from gtts import gTTS
 import io
 
+# Only needed if HF_TOKEN is set
+try:
+    from huggingface_hub import InferenceClient
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
 # ============================================================
 #  UI CONFIG
 # ============================================================
@@ -15,7 +22,6 @@ st.set_page_config(
     page_icon="💬"
 )
 
-# Stealth + friendly UI theme
 st.markdown("""
 <style>
     .stApp { background-color: #050814; color: #FAFAFA; }
@@ -64,12 +70,64 @@ class UserProfile(BaseModel):
     facts: List[str]
 
 # ============================================================
-# COGNITIVE ENGINE (RULE-BASED, NO LLM / NO API)
+# HUGGINGFACE CHAT CLIENT (OPTIONAL)
+# ============================================================
+
+@st.cache_resource
+def get_hf_client():
+    """
+    Returns an InferenceClient if HF_TOKEN & huggingface_hub are available.
+    Otherwise returns None (app falls back to offline persona templates).
+    """
+    if not HF_AVAILABLE:
+        return None
+    try:
+        token = st.secrets["HF_TOKEN"]  # must be set in Streamlit Secrets for cloud
+    except KeyError:
+        return None
+
+    try:
+        client = InferenceClient(api_key=token, provider="auto")
+        return client
+    except Exception:
+        return None
+
+
+def hf_chat(messages, max_tokens=400, temperature=0.7):
+    """
+    Wrapper around HuggingFace InferenceClient chat.completions.
+    - No explicit model: HF picks a recommended chat LLM for us.
+    - If anything fails, returns None so we can fall back.
+    """
+    client = get_hf_client()
+    if client is None:
+        return None
+
+    try:
+        completion = client.chat.completions.create(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        text = completion.choices[0].message.content
+
+        # Optional: strip <think> blocks if model uses them
+        while "<think>" in text and "</think>" in text:
+            s = text.find("<think>")
+            e = text.find("</think>") + len("</think>")
+            text = text[:s] + text[e:]
+        return text.strip()
+    except Exception as e:
+        st.error(f"⚠️ HuggingFace error (fallback to offline persona): {e}")
+        return None
+
+# ============================================================
+# COGNITIVE ENGINE (RULE-BASED MEMORY)
 # ============================================================
 class CognitiveEngine:
     """
     Deterministic memory extraction from the fixed 30-message history.
-    This simulates a 'memory module' without relying on external APIs.
+    This keeps the memory system error-proof and free.
     """
 
     def __init__(self):
@@ -83,7 +141,7 @@ class CognitiveEngine:
         for msg in history:
             lower = msg.lower()
 
-            # --- Preferences ---
+            # Preferences
             if "hate cluttered uis" in lower or "keep it minimal" in lower:
                 prefs.add("Prefers minimal, uncluttered UIs")
             if "prefer snake_case" in lower:
@@ -96,7 +154,6 @@ class CognitiveEngine:
                 prefs.add("No emojis in code comments")
             if "hate dark mode" in lower:
                 prefs.add("Dislikes dark mode in documentation")
-
             if "postgresql" in lower:
                 prefs.add("Prefers PostgreSQL as primary database")
             if "must work on linux" in lower:
@@ -104,7 +161,7 @@ class CognitiveEngine:
             if "functional programming" in lower:
                 prefs.add("Favors functional programming style")
 
-            # --- Emotional patterns ---
+            # Emotional patterns
             if "anxious" in lower:
                 emotion_flags.append("anxiety around deadlines and work")
             if "impostor syndrome" in lower:
@@ -116,14 +173,14 @@ class CognitiveEngine:
             if "calm and focused" in lower:
                 emotion_flags.append("ability to reach a calm, focused state")
 
-            # --- Facts worth remembering ---
+            # Facts
             if "my dog" in lower and "barnaby" in lower:
                 facts.add("Has a dog named Barnaby")
             if "i'm in seattle" in lower or "seattle (pst)" in lower:
                 facts.add("Lives in Seattle (PST)")
             if "senior dev" in lower:
                 facts.add("Is a Senior Developer")
-            if "need a python script for etl" in lower or "etl" in lower:
+            if "etl" in lower:
                 facts.add("Works with Python ETL scripts")
             if "project 'titanapi'" in lower:
                 facts.add("Working on a project called 'TitanAPI'")
@@ -145,12 +202,11 @@ class CognitiveEngine:
                 + ", but remains motivated and proud of progress."
             )
 
-        profile = UserProfile(
+        return UserProfile(
             user_preferences=sorted(prefs),
             emotional_patterns=emotional_patterns,
             facts=sorted(facts),
         )
-        return profile
 
     def save(self, profile: UserProfile):
         with open(self.memory_file, "w") as f:
@@ -159,12 +215,11 @@ class CognitiveEngine:
     def load(self):
         if os.path.exists(self.memory_file):
             with open(self.memory_file, "r") as f:
-                data = json.load(f)
-                return UserProfile(**data)
+                return UserProfile(**json.load(f))
         return None
 
 # ============================================================
-# PERSONA ENGINE (TEMPLATE-BASED, NO LLM)
+# PERSONA ENGINE — OFFLINE TEMPLATES
 # ============================================================
 def persona_rules(persona: str) -> str:
     return {
@@ -172,26 +227,108 @@ def persona_rules(persona: str) -> str:
         "Witty Friend": "Casual, playful, a bit cheeky but caring.",
         "Therapist-style Guide": "Reflect emotions, ask gentle questions, supportive.",
         "No-Nonsense CTO": "Direct, blunt about priorities, action-focused.",
-        "Neutral": "Plain, factual, minimal style."
+        "Neutral": "Plain, factual, minimal style.",
     }[persona]
 
 
-def generate_reply(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str:
+def generate_reply_offline(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str:
     """
-    Simple handcrafted replies showing how GuppShupp’s persona & memory
-    change tone. No LLM calls – fully deterministic.
+    Offline fallback persona replies (no LLM).
+    Contains basic emotional vs work branching so it's not completely dumb.
     """
-
-    tail = ""
-    if any("PostgreSQL" in p for p in profile.user_preferences):
-        tail += " Since you like PostgreSQL, keep your data design tight while you work through this."
-    if any("Linux" in p for p in profile.user_preferences):
-        tail += " Also, remember everything should behave well on Linux."
-    if "Has a dog named Barnaby" in profile.facts:
-        tail += " And hey, maybe a quick break with Barnaby wouldn’t hurt."
-
     msg = user_msg.strip()
+    lower = msg.lower()
 
+    emotional_keywords = [
+        "lonely", "alone", "sad", "depressed", "down",
+        "anxious", "anxiety", "stressed", "burned out", "burnt out",
+        "tired of", "drained", "overwhelmed", "heartbroken"
+    ]
+    work_keywords = [
+        "bug", "deadline", "q4", "ticket", "jira", "deploy", "release",
+        "code", "pr", "merge", "etl", "database", "sql", "async",
+        "error", "react", "schema", "node", "python"
+    ]
+
+    is_emotional = any(k in lower for k in emotional_keywords)
+    is_work = any(k in lower for k in work_keywords)
+
+    work_tail = ""
+    if is_work:
+        if any("PostgreSQL" in p for p in profile.user_preferences):
+            work_tail += " Since you like PostgreSQL, keep your data design tight while you work through this."
+        if any("Linux" in p for p in profile.user_preferences):
+            work_tail += " Also, remember everything should behave well on Linux."
+
+    support_tail = ""
+    if "Has a dog named Barnaby" in profile.facts:
+        support_tail += " Maybe spending a few minutes with Barnaby could help you feel a bit more grounded."
+    if any("family" in f.lower() for f in profile.facts):
+        support_tail += " You’ve mentioned family matters to you—reaching out to someone you trust might help."
+
+    # EMOTIONAL PATH
+    if is_emotional and not is_work:
+        if persona == "Neutral":
+            return (
+                f"You said: \"{msg}\".\n\n"
+                "Feeling lonely or low is really hard, and it makes total sense that it feels heavy.\n"
+                "A few gentle ideas:\n"
+                "1. Ping or call one person you feel even a bit safe with.\n"
+                "2. Do one small comforting thing for yourself (walk, music, tea, shower).\n"
+                "3. If these feelings return often, consider talking to a professional or someone you trust.\n"
+                f"{support_tail}"
+            )
+
+        if persona == "Calm Mentor":
+            return (
+                f"GuppShupp hears you: \"{msg}\".\n\n"
+                "Loneliness can feel huge, but it doesn’t say anything bad about you.\n"
+                "Let’s keep things small and kind:\n"
+                "1. Reach out to one person—no deep talk needed, even a simple \"hey\" is enough.\n"
+                "2. Do one activity that soothes you—walk, reading, light coding, music.\n"
+                "3. If this feeling keeps returning, write down when it appears and what helps even a little.\n"
+                f"{support_tail}"
+            )
+
+        if persona == "Witty Friend":
+            return (
+                f"Okay, real talk: \"{msg}\".\n\n"
+                "Lonely brain is a drama queen and lies a lot about how unlovable you are.\n"
+                "Here’s the GuppShupp game plan:\n"
+                "- DM or ping *one* human you kinda like. No paragraphs, just \"yo\" or a meme.\n"
+                "- Do one cozy thing just for you—snack, show, music, cuddle with Barnaby if he’s around.\n"
+                "- Remember: this feeling is a visitor, not your whole identity.\n"
+                f"{support_tail}"
+            )
+
+        if persona == "Therapist-style Guide":
+            return (
+                f"It sounds like you’re saying: \"{msg}\".\n\n"
+                "Loneliness can bring up painful stories like \"I don’t matter\" or \"everyone else is fine.\" "
+                "Those are feelings, not facts.\n\n"
+                "A few questions to gently explore:\n"
+                "- When does this feeling show up the most (time of day, situations)?\n"
+                "- Is there anyone you feel even a little bit safe reaching out to right now?\n"
+                "- What usually gives you even a tiny bit of relief?\n\n"
+                f"{support_tail}\n"
+                "If this becomes frequent or intense, a mental health professional could be a real support."
+            )
+
+        if persona == "No-Nonsense CTO":
+            return (
+                f"Input: \"{msg}\".\n\n"
+                "Straight talk: loneliness is a signal, not a personal failure.\n\n"
+                "3-step concrete plan:\n"
+                "1. Pick ONE person (friend / colleague / family) and send a short message today.\n"
+                "2. Put one social thing on your calendar this week (call, coffee, even online).\n"
+                "3. Start one small recurring touchpoint—a group, server, standup, anything that puts you around people.\n"
+                f"{support_tail}\n\n"
+                "You’re aiming for CTO-level life—leaders need support systems, not just grind."
+            )
+
+        return f"[{persona}] {msg}"
+
+    # WORK / TECH PATH (default)
     if persona == "Neutral":
         return (
             f"You said: \"{msg}\"\n\n"
@@ -199,57 +336,96 @@ def generate_reply(user_msg: str, profile: UserProfile, persona: str = "Neutral"
             "1. Pick the smallest concrete sub-task.\n"
             "2. Focus only on that until it’s done.\n"
             "3. Then move to the next piece.\n"
-            f"{tail}"
+            f"{work_tail}"
         )
 
     if persona == "Calm Mentor":
         return (
             f"GuppShupp hears you: \"{msg}\".\n\n"
-            "It makes sense to feel this way, especially with everything on your plate.\n"
-            "Let’s keep it gentle:\n"
-            "1. Name one tiny part of this that you can control right now.\n"
+            "You care about doing things well, which is why this feels heavy.\n"
+            "Let’s keep it gentle and focused:\n"
+            "1. Name one tiny piece of this you can work on now.\n"
             "2. Give it 20–25 focused minutes.\n"
-            "3. At the end, write down one win, no matter how small.\n"
-            f"{tail}\n\n"
-            "From your patterns, you juggle anxiety and impostor feelings, but you also reach calm and feel proud of progress. Lean on that."
+            "3. At the end, write down one win, even if it’s small.\n"
+            f"{work_tail}"
         )
 
     if persona == "Witty Friend":
         return (
-            f"Okay, so you’re dealing with: \"{msg}\".\n\n"
-            "Classic overworked, under-caffeinated dev energy.\n"
-            "Here’s the GuppShupp hack:\n"
-            "- Pick ONE tiny thing you can fix or ship in the next 30 minutes.\n"
-            "- Ignore everything else like it’s dark-mode docs you hate.\n"
-            "- Ship it. Tiny wins beat big stress.\n"
-            f"{tail}"
+            f"So you’re dealing with: \"{msg}\".\n\n"
+            "Peak dev vibes: too many tasks, not enough brain threads.\n"
+            "Try this:\n"
+            "- Pick ONE thing you can move in 30 minutes.\n"
+            "- Ignore everything else like it’s a Jira ticket from 2018.\n"
+            "- Ship it, then brag to Future You.\n"
+            f"{work_tail}"
         )
 
     if persona == "Therapist-style Guide":
         return (
             f"It sounds like you’re saying: \"{msg}\".\n\n"
-            "That tells me there’s a mix of pressure, responsibility, and your own high standards.\n"
-            "A few gentle questions:\n"
-            "- What part of this feels heaviest right now?\n"
-            "- What have you already done that you’re quietly proud of?\n"
-            "- If you broke this into two smaller steps, what would they be?\n\n"
-            "Your history shows you’ve handled anxiety before and found your calm again.\n"
-            f"{tail}"
+            "There’s pressure here, probably with some self-expectation behind it.\n"
+            "A few questions:\n"
+            "- What feels most urgent vs most important?\n"
+            "- What have you already done that you might be downplaying?\n"
+            "- What would \"good enough for today\" look like?\n"
+            f"{work_tail}"
         )
 
     if persona == "No-Nonsense CTO":
         return (
             f"Input: \"{msg}\".\n\n"
-            "Here’s the ruthless version:\n"
-            "1. Decide what absolutely must be true by end of day.\n"
-            "2. Kill everything that doesn’t serve that (tickets, polish, ego).\n"
+            "Here’s the blunt version:\n"
+            "1. Decide what outcome you actually need by end of day.\n"
+            "2. Cut everything that doesn’t serve that outcome.\n"
             "3. Ship the smallest usable slice.\n"
             "4. Log follow-ups instead of doing them now.\n"
-            f"{tail}\n\n"
-            "You want to be a CTO. This is the muscle: prioritizing under pressure, not doing everything."
+            f"{work_tail}\n\n"
+            "You want to be a CTO – this is the job: prioritize, ship, iterate."
         )
 
     return f"[{persona}] {msg}"
+
+# ============================================================
+# PERSONA ENGINE — HUGGINGFACE VERSION
+# ============================================================
+def generate_reply_hf(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str | None:
+    """
+    Uses HuggingFace LLM (via InferenceClient) to generate emotionally
+    intelligent, persona-aware replies. Returns None if HF unavailable.
+    """
+    client = get_hf_client()
+    if client is None:
+        return None
+
+    system_prompt = f"""
+You are GuppShupp, a lifelong AI friend.
+
+PERSONA: {persona}
+PERSONA_TRAITS: {persona_rules(persona)}
+
+USER MEMORY:
+- Preferences: {profile.user_preferences}
+- Emotional patterns: {profile.emotional_patterns}
+- Facts: {profile.facts}
+
+GOAL:
+- Respond like a caring, emotionally intelligent friend.
+- If the user expresses feelings (lonely, sad, anxious, overwhelmed),
+  prioritize empathy, validation, and small, realistic suggestions.
+- If the user talks about work/tech, be practical and focused.
+- Do NOT mention that you are using 'memory' or 'profile'; just speak naturally.
+- Keep answers concise (1–3 short paragraphs).
+- No emojis unless the user uses them first.
+"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg},
+    ]
+
+    text = hf_chat(messages, max_tokens=350, temperature=0.7)
+    return text
 
 # ============================================================
 # TEXT-TO-SPEECH (OPTIONAL)
@@ -272,7 +448,6 @@ def main():
     header_col1, header_col2 = st.columns([1, 4])
 
     with header_col1:
-        # Put your logo file as "guppshupp_logo.png" in the same folder as app.py
         try:
             st.image("guppshupp_logo.png", width=72)
         except Exception:
@@ -283,17 +458,15 @@ def main():
             "<h1 style='margin-bottom:0;'>GuppShupp – Lifelong Friend</h1>",
             unsafe_allow_html=True,
         )
+        mode_text = "LLM-powered (HuggingFace)" if get_hf_client() else "Offline fallback mode (no HF token detected)"
         st.markdown(
-            "<p style='color:#d1d5db;'>A chat companion that remembers you, "
-            "adapts its personality, and keeps things short, real, and helpful.</p>",
+            f"<p style='color:#d1d5db;'>{mode_text}</p>",
             unsafe_allow_html=True,
         )
 
     brain = CognitiveEngine()
 
-    # ---------------------------------------------------------
-    # 1. MEMORY EXTRACTION
-    # ---------------------------------------------------------
+    # -------------------- 1. MEMORY EXTRACTION --------------------
     st.subheader("1. How GuppShupp Remembers You")
 
     col1, col2 = st.columns(2)
@@ -330,9 +503,7 @@ def main():
 
     st.divider()
 
-    # ---------------------------------------------------------
-    # 2. PERSONA ENGINE — BEFORE / AFTER
-    # ---------------------------------------------------------
+    # -------------------- 2. PERSONA ENGINE --------------------
     st.subheader("2. GuppShupp’s Personality Modes")
 
     persona = st.selectbox(
@@ -345,8 +516,12 @@ def main():
     if user_msg and "profile" in st.session_state:
         profile = st.session_state["profile"]
 
-        neutral = generate_reply(user_msg, profile, persona="Neutral")
-        styled = generate_reply(user_msg, profile, persona=persona)
+        # Neutral and Persona responses using HF if available, otherwise offline
+        neutral_hf = generate_reply_hf(user_msg, profile, persona="Neutral")
+        neutral = neutral_hf or generate_reply_offline(user_msg, profile, persona="Neutral")
+
+        persona_hf = generate_reply_hf(user_msg, profile, persona=persona)
+        styled = persona_hf or generate_reply_offline(user_msg, profile, persona=persona)
 
         left, right = st.columns(2)
 
