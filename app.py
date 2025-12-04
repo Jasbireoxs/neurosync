@@ -101,7 +101,7 @@ class CognitiveEngine:
         return None
 
 # ============================================================
-# CLOUD AI ENGINE (FIXED: Microsoft Phi-3)
+# CLOUD AI ENGINE (FAILSAFE MODE)
 # ============================================================
 @st.cache_resource
 def get_client():
@@ -116,11 +116,20 @@ def generate_reply_cloud(user_msg, profile, persona):
     if not client:
         return "⚠️ Error: HF_TOKEN not found in secrets. Please add your Hugging Face token."
 
-    # FIX: Using Microsoft Phi-3 (Stable on free tier)
-    MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
+    # ------------------------------------------------------------
+    # FALLBACK CHAIN
+    # We try 3 different models. If one is down/unsupported, 
+    # the code automatically tries the next one.
+    # ------------------------------------------------------------
+    MODELS_TO_TRY = [
+        "mistralai/Mistral-7B-Instruct-v0.2", # Very reliable
+        "HuggingFaceH4/zephyr-7b-beta",       # Good backup
+        "google/gemma-1.1-7b-it"              # Google's open model
+    ]
 
-    system_prompt = f"""
-    You are GuppShupp, a helpful AI assistant.
+    # Raw prompt construction (Works for Text Gen & Chat models)
+    prompt_text = f"""[INST] 
+    You are GuppShupp, an AI assistant.
     Current Persona: {persona}
     
     USER DATA:
@@ -128,25 +137,33 @@ def generate_reply_cloud(user_msg, profile, persona):
     - Mood: {profile.emotional_patterns}
     - Facts: {', '.join(profile.facts)}
     
-    INSTRUCTION:
-    Respond to the user's message using the Persona and User Data.
-    Keep it short and concise.
+    User Message: "{user_msg}"
+    
+    Task: Respond to the message using the Persona and User Data. Keep it concise.
+    [/INST]
     """
 
-    try:
-        # Phi-3 works perfectly with chat completion
-        response = client.chat_completion(
-            model=MODEL_ID,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg}
-            ],
-            max_tokens=200,
-            temperature=0.7
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"⚠️ Cloud Error: {e}"
+    last_error = ""
+
+    for model_id in MODELS_TO_TRY:
+        try:
+            # We use text_generation because it is the most universally supported method
+            response = client.text_generation(
+                model=model_id,
+                prompt=prompt_text,
+                max_new_tokens=200,
+                temperature=0.7,
+                do_sample=True,
+                stop_sequences=["[/INST]", "User:", "System:"]
+            )
+            # If successful, return immediately
+            return response.strip()
+        except Exception as e:
+            # If fail, log error and loop to next model
+            last_error = str(e)
+            continue
+
+    return f"⚠️ All Cloud Models failed. Last error: {last_error}"
 
 # ============================================================
 # MAIN APP
@@ -192,7 +209,7 @@ def main():
             
         # Show AI (Cloud)
         with st.chat_message("assistant"):
-            with st.spinner("Thinking (on Hugging Face Cloud)..."):
+            with st.spinner("Thinking (Trying available Cloud Models)..."):
                 reply = generate_reply_cloud(user_input, p, persona)
                 st.write(reply)
                 
