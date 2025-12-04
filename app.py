@@ -25,17 +25,17 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #050814; color: #FAFAFA; }
-    .stButton>button { border-radius: 999px; font-weight: 600;
+    .stButton>button { border-radius: 999px; font-weight: 600; 
                        border: 1px solid #ff4b7a; background: #111827; }
     .stButton>button:hover { border-color: #ff6b94; }
-    .memory-card { background: #111827; padding: 20px; border-radius: 16px;
-                   border-left: 5px solid #ff4b7a;
+    .memory-card { background: #111827; padding: 20px; border-radius: 16px; 
+                   border-left: 5px solid #ff4b7a; 
                    box-shadow: 0 8px 18px rgba(0,0,0,0.45); }
-    .stTextInput>div>div>input,
-    .stChatInputContainer textarea {
-        background-color: #050814;
-        color: #FAFAFA;
-        border-radius: 999px;
+    .stTextInput>div>div>input, 
+    .stChatInputContainer textarea { 
+        background-color: #050814; 
+        color: #FAFAFA; 
+        border-radius: 999px; 
     }
 </style>
 """, unsafe_allow_html=True)
@@ -70,24 +70,27 @@ class UserProfile(BaseModel):
     facts: List[str]
 
 # ============================================================
-# HUGGINGFACE CHAT CLIENT (OPTIONAL)
+# HUGGINGFACE CHAT CLIENT (FIXED)
 # ============================================================
 
 @st.cache_resource
 def get_hf_client():
     """
-    Returns an InferenceClient if HF_TOKEN & huggingface_hub are available.
-    Otherwise returns None (app falls back to offline persona templates).
+    Returns an InferenceClient using a SPECIFIC model to avoid "no recommended model" errors.
     """
     if not HF_AVAILABLE:
         return None
     try:
-        token = st.secrets["HF_TOKEN"]  # must be set in Streamlit Secrets for cloud
+        # 1. Get token from secrets
+        token = st.secrets["HF_TOKEN"] 
     except KeyError:
         return None
 
     try:
-        client = InferenceClient(api_key=token, provider="auto")
+        # 2. FIX: Explicitly use Mistral-7B-Instruct v0.3
+        # This prevents the 'Task conversational has no recommended model' error.
+        repo_id = "mistralai/Mistral-7B-Instruct-v0.3"
+        client = InferenceClient(model=repo_id, token=token)
         return client
     except Exception:
         return None
@@ -95,9 +98,7 @@ def get_hf_client():
 
 def hf_chat(messages, max_tokens=400, temperature=0.7):
     """
-    Wrapper around HuggingFace InferenceClient chat.completions.
-    - No explicit model: HF picks a recommended chat LLM for us.
-    - If anything fails, returns None so we can fall back.
+    Wrapper around HuggingFace InferenceClient.
     """
     client = get_hf_client()
     if client is None:
@@ -111,14 +112,14 @@ def hf_chat(messages, max_tokens=400, temperature=0.7):
         )
         text = completion.choices[0].message.content
 
-        # Optional: strip <think> blocks if model uses them
+        # Cleanup <think> tags if model outputs them
         while "<think>" in text and "</think>" in text:
             s = text.find("<think>")
             e = text.find("</think>") + len("</think>")
             text = text[:s] + text[e:]
         return text.strip()
     except Exception as e:
-        st.error(f"⚠️ HuggingFace error (fallback to offline persona): {e}")
+        # st.error(f"⚠️ HuggingFace error: {e}") # Uncomment to see raw error
         return None
 
 # ============================================================
@@ -127,7 +128,6 @@ def hf_chat(messages, max_tokens=400, temperature=0.7):
 class CognitiveEngine:
     """
     Deterministic memory extraction from the fixed 30-message history.
-    This keeps the memory system error-proof and free.
     """
 
     def __init__(self):
@@ -197,8 +197,8 @@ class CognitiveEngine:
             emotional_patterns = "Emotionally stable; no strong recurring negative patterns detected."
         else:
             emotional_patterns = (
-                "Frequently experiences "
-                + ", ".join(sorted(set(emotion_flags)))
+                "Frequently experiences " 
+                + ", ".join(sorted(set(emotion_flags))) 
                 + ", but remains motivated and proud of progress."
             )
 
@@ -234,13 +234,12 @@ def persona_rules(persona: str) -> str:
 def generate_reply_offline(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str:
     """
     Offline fallback persona replies (no LLM).
-    Contains basic emotional vs work branching so it's not completely dumb.
     """
     msg = user_msg.strip()
     lower = msg.lower()
 
     emotional_keywords = [
-        "lonely", "alone", "sad", "depressed", "down",
+        "lonely", "alone", "sad", "depressed", "down", 
         "anxious", "anxiety", "stressed", "burned out", "burnt out",
         "tired of", "drained", "overwhelmed", "heartbroken"
     ]
@@ -256,143 +255,58 @@ def generate_reply_offline(user_msg: str, profile: UserProfile, persona: str = "
     work_tail = ""
     if is_work:
         if any("PostgreSQL" in p for p in profile.user_preferences):
-            work_tail += " Since you like PostgreSQL, keep your data design tight while you work through this."
+            work_tail += " Since you like PostgreSQL, keep your data design tight."
         if any("Linux" in p for p in profile.user_preferences):
             work_tail += " Also, remember everything should behave well on Linux."
 
     support_tail = ""
     if "Has a dog named Barnaby" in profile.facts:
-        support_tail += " Maybe spending a few minutes with Barnaby could help you feel a bit more grounded."
-    if any("family" in f.lower() for f in profile.facts):
-        support_tail += " You’ve mentioned family matters to you—reaching out to someone you trust might help."
-
+        support_tail += " Maybe spending a few minutes with Barnaby could help you feel grounded."
+    
     # EMOTIONAL PATH
     if is_emotional and not is_work:
-        if persona == "Neutral":
-            return (
-                f"You said: \"{msg}\".\n\n"
-                "Feeling lonely or low is really hard, and it makes total sense that it feels heavy.\n"
-                "A few gentle ideas:\n"
-                "1. Ping or call one person you feel even a bit safe with.\n"
-                "2. Do one small comforting thing for yourself (walk, music, tea, shower).\n"
-                "3. If these feelings return often, consider talking to a professional or someone you trust.\n"
-                f"{support_tail}"
-            )
-
         if persona == "Calm Mentor":
             return (
                 f"GuppShupp hears you: \"{msg}\".\n\n"
-                "Loneliness can feel huge, but it doesn’t say anything bad about you.\n"
-                "Let’s keep things small and kind:\n"
-                "1. Reach out to one person—no deep talk needed, even a simple \"hey\" is enough.\n"
-                "2. Do one activity that soothes you—walk, reading, light coding, music.\n"
-                "3. If this feeling keeps returning, write down when it appears and what helps even a little.\n"
+                "Loneliness or stress can feel huge, but it doesn’t define you.\n"
+                "Let’s keep things small: take a breath, maybe step away for 5 minutes.\n"
                 f"{support_tail}"
             )
-
+        
         if persona == "Witty Friend":
             return (
-                f"Okay, real talk: \"{msg}\".\n\n"
-                "Lonely brain is a drama queen and lies a lot about how unlovable you are.\n"
-                "Here’s the GuppShupp game plan:\n"
-                "- DM or ping *one* human you kinda like. No paragraphs, just \"yo\" or a meme.\n"
-                "- Do one cozy thing just for you—snack, show, music, cuddle with Barnaby if he’s around.\n"
-                "- Remember: this feeling is a visitor, not your whole identity.\n"
-                f"{support_tail}"
-            )
-
-        if persona == "Therapist-style Guide":
-            return (
-                f"It sounds like you’re saying: \"{msg}\".\n\n"
-                "Loneliness can bring up painful stories like \"I don’t matter\" or \"everyone else is fine.\" "
-                "Those are feelings, not facts.\n\n"
-                "A few questions to gently explore:\n"
-                "- When does this feeling show up the most (time of day, situations)?\n"
-                "- Is there anyone you feel even a little bit safe reaching out to right now?\n"
-                "- What usually gives you even a tiny bit of relief?\n\n"
-                f"{support_tail}\n"
-                "If this becomes frequent or intense, a mental health professional could be a real support."
+                f"Real talk: \"{msg}\".\n\n"
+                "Your brain is being a drama queen. You're doing fine.\n"
+                "Go grab a snack, pet Barnaby, and reset.\n"
             )
 
         if persona == "No-Nonsense CTO":
             return (
                 f"Input: \"{msg}\".\n\n"
-                "Straight talk: loneliness is a signal, not a personal failure.\n\n"
-                "3-step concrete plan:\n"
-                "1. Pick ONE person (friend / colleague / family) and send a short message today.\n"
-                "2. Put one social thing on your calendar this week (call, coffee, even online).\n"
-                "3. Start one small recurring touchpoint—a group, server, standup, anything that puts you around people.\n"
-                f"{support_tail}\n\n"
-                "You’re aiming for CTO-level life—leaders need support systems, not just grind."
+                "Burnout kills productivity. If you're overwhelmed, cut scope immediately.\n"
+                "Take a break. That's an order."
             )
+        
+        return f"I hear you saying: \"{msg}\". Take it easy on yourself today."
 
-        return f"[{persona}] {msg}"
-
-    # WORK / TECH PATH (default)
-    if persona == "Neutral":
-        return (
-            f"You said: \"{msg}\"\n\n"
-            "Here’s a simple way forward:\n"
-            "1. Pick the smallest concrete sub-task.\n"
-            "2. Focus only on that until it’s done.\n"
-            "3. Then move to the next piece.\n"
-            f"{work_tail}"
-        )
-
+    # WORK PATH (Default)
     if persona == "Calm Mentor":
-        return (
-            f"GuppShupp hears you: \"{msg}\".\n\n"
-            "You care about doing things well, which is why this feels heavy.\n"
-            "Let’s keep it gentle and focused:\n"
-            "1. Name one tiny piece of this you can work on now.\n"
-            "2. Give it 20–25 focused minutes.\n"
-            "3. At the end, write down one win, even if it’s small.\n"
-            f"{work_tail}"
-        )
+        return f"Let's break \"{msg}\" down into small steps. You've got this. {work_tail}"
 
     if persona == "Witty Friend":
-        return (
-            f"So you’re dealing with: \"{msg}\".\n\n"
-            "Peak dev vibes: too many tasks, not enough brain threads.\n"
-            "Try this:\n"
-            "- Pick ONE thing you can move in 30 minutes.\n"
-            "- Ignore everything else like it’s a Jira ticket from 2018.\n"
-            "- Ship it, then brag to Future You.\n"
-            f"{work_tail}"
-        )
-
-    if persona == "Therapist-style Guide":
-        return (
-            f"It sounds like you’re saying: \"{msg}\".\n\n"
-            "There’s pressure here, probably with some self-expectation behind it.\n"
-            "A few questions:\n"
-            "- What feels most urgent vs most important?\n"
-            "- What have you already done that you might be downplaying?\n"
-            "- What would \"good enough for today\" look like?\n"
-            f"{work_tail}"
-        )
+        return f"Ugh, \"{msg}\"? Classic dev life. Fix it and ship it! {work_tail}"
 
     if persona == "No-Nonsense CTO":
-        return (
-            f"Input: \"{msg}\".\n\n"
-            "Here’s the blunt version:\n"
-            "1. Decide what outcome you actually need by end of day.\n"
-            "2. Cut everything that doesn’t serve that outcome.\n"
-            "3. Ship the smallest usable slice.\n"
-            "4. Log follow-ups instead of doing them now.\n"
-            f"{work_tail}\n\n"
-            "You want to be a CTO – this is the job: prioritize, ship, iterate."
-        )
+        return f"Regarding \"{msg}\": Prioritize the blocker, ignore the noise. Ship it. {work_tail}"
 
-    return f"[{persona}] {msg}"
+    return f"[{persona}] {msg} {work_tail}"
 
 # ============================================================
 # PERSONA ENGINE — HUGGINGFACE VERSION
 # ============================================================
 def generate_reply_hf(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str | None:
     """
-    Uses HuggingFace LLM (via InferenceClient) to generate emotionally
-    intelligent, persona-aware replies. Returns None if HF unavailable.
+    Uses HuggingFace LLM (via InferenceClient) to generate replies.
     """
     client = get_hf_client()
     if client is None:
@@ -411,8 +325,6 @@ USER MEMORY:
 
 GOAL:
 - Respond like a caring, emotionally intelligent friend.
-- If the user expresses feelings (lonely, sad, anxious, overwhelmed),
-  prioritize empathy, validation, and small, realistic suggestions.
 - If the user talks about work/tech, be practical and focused.
 - Do NOT mention that you are using 'memory' or 'profile'; just speak naturally.
 - Keep answers concise (1–3 short paragraphs).
@@ -428,7 +340,7 @@ GOAL:
     return text
 
 # ============================================================
-# TEXT-TO-SPEECH (OPTIONAL)
+# TEXT-TO-SPEECH
 # ============================================================
 def tts(text: str):
     try:
@@ -448,19 +360,16 @@ def main():
     header_col1, header_col2 = st.columns([1, 4])
 
     with header_col1:
-        try:
-            st.image("guppshupp_logo.png", width=72)
-        except Exception:
-            st.markdown("💬")
+        st.markdown("💬")
 
     with header_col2:
         st.markdown(
-            "<h1 style='margin-bottom:0;'>GuppShupp – Lifelong Friend</h1>",
+            "<h1 style='margin-bottom:0;'>GuppShupp – Lifelong Friend</h1>", 
             unsafe_allow_html=True,
         )
-        mode_text = "LLM-powered (HuggingFace)" if get_hf_client() else "Offline fallback mode (no HF token detected)"
+        mode_text = "LLM-powered (HuggingFace)" if get_hf_client() else "Offline fallback mode (No HF Token)"
         st.markdown(
-            f"<p style='color:#d1d5db;'>{mode_text}</p>",
+            f"<p style='color:#d1d5db;'>{mode_text}</p>", 
             unsafe_allow_html=True,
         )
 
@@ -468,26 +377,26 @@ def main():
 
     # -------------------- 1. MEMORY EXTRACTION --------------------
     st.subheader("1. How GuppShupp Remembers You")
-
+    
     col1, col2 = st.columns(2)
-
+    
     with col1:
         with st.expander("📄 See your 30-message story"):
             st.code(CHAT_HISTORY_30)
-
+        
         if st.button("🧠 Build Memory Profile", use_container_width=True):
             with st.spinner("GuppShupp is quietly connecting the dots..."):
                 profile = brain.extract_profile(CHAT_HISTORY_30)
                 brain.save(profile)
                 st.session_state["profile"] = profile
-                st.success("✅ Memory profile created (preferences, emotions, and key facts).")
+                st.success("✅ Memory profile created.")
 
     with col2:
         if "profile" not in st.session_state:
             loaded = brain.load()
             if loaded:
                 st.session_state["profile"] = loaded
-
+        
         if "profile" in st.session_state:
             p = st.session_state["profile"]
             st.markdown(f"""
@@ -499,7 +408,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("Click **Build Memory Profile** to let GuppShupp learn from the 30 messages.")
+            st.info("Click **Build Memory Profile** to let GuppShupp learn.")
 
     st.divider()
 
@@ -515,26 +424,27 @@ def main():
 
     if user_msg and "profile" in st.session_state:
         profile = st.session_state["profile"]
-
-        # Neutral and Persona responses using HF if available, otherwise offline
+        
+        # 1. Try HF generation first
         neutral_hf = generate_reply_hf(user_msg, profile, persona="Neutral")
-        neutral = neutral_hf or generate_reply_offline(user_msg, profile, persona="Neutral")
+        # 2. Fallback to offline if HF fails (returns None)
+        neutral = neutral_hf if neutral_hf else generate_reply_offline(user_msg, profile, persona="Neutral")
 
         persona_hf = generate_reply_hf(user_msg, profile, persona=persona)
-        styled = persona_hf or generate_reply_offline(user_msg, profile, persona=persona)
+        styled = persona_hf if persona_hf else generate_reply_offline(user_msg, profile, persona=persona)
 
         left, right = st.columns(2)
-
+        
         with left:
             with st.chat_message("assistant"):
                 st.markdown("### 🔹 Neutral GuppShupp")
                 st.write(neutral)
-
+        
         with right:
             with st.chat_message("assistant"):
                 st.markdown(f"### 🔸 {persona} GuppShupp")
                 st.write(styled)
-
+                
                 audio = tts(styled)
                 if audio:
                     st.audio(audio, format="audio/mp3")
