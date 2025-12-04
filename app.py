@@ -11,17 +11,26 @@ import io
 # ============================================================
 st.set_page_config(
     layout="wide",
-    page_title="NeuroSync: Agentic Memory (Offline Edition)",
-    page_icon="🧠"
+    page_title="GuppShupp – Lifelong Friend",
+    page_icon="💬"
 )
 
+# Stealth + friendly UI theme
 st.markdown("""
 <style>
-    .stApp { background-color: #0E1117; color: #FAFAFA; }
-    .stButton>button { border-radius: 8px; font-weight: bold; border: 1px solid #30363D; }
-    .memory-card { background-color: #1F2937; padding: 20px; border-radius: 10px;
-                   border-left: 5px solid #6366F1; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-    .stTextInput>div>div>input { background-color: #161B22; color: #FAFAFA; }
+    .stApp { background-color: #050814; color: #FAFAFA; }
+    .stButton>button { border-radius: 999px; font-weight: 600;
+                       border: 1px solid #ff4b7a; background: #111827; }
+    .stButton>button:hover { border-color: #ff6b94; }
+    .memory-card { background: #111827; padding: 20px; border-radius: 16px;
+                   border-left: 5px solid #ff4b7a;
+                   box-shadow: 0 8px 18px rgba(0,0,0,0.45); }
+    .stTextInput>div>div>input,
+    .stChatInputContainer textarea {
+        background-color: #050814;
+        color: #FAFAFA;
+        border-radius: 999px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,24 +64,18 @@ class UserProfile(BaseModel):
     facts: List[str]
 
 # ============================================================
-# COGNITIVE ENGINE (RULE-BASED, NO LLM)
+# COGNITIVE ENGINE (RULE-BASED, NO LLM / NO API)
 # ============================================================
 class CognitiveEngine:
     """
-    Instead of calling an LLM, we deterministically extract memory
-    from the fixed 30-message chat history.
-
-    This still shows:
-    - User preferences
-    - Emotional patterns
-    - Facts worth remembering
+    Deterministic memory extraction from the fixed 30-message history.
+    This simulates a 'memory module' without relying on external APIs.
     """
 
     def __init__(self):
         self.memory_file = "long_term_memory.json"
 
     def extract_profile(self, history: List[str]) -> UserProfile:
-        # --- Very simple heuristic parsing over messages ---
         prefs = set()
         facts = set()
         emotion_flags = []
@@ -80,7 +83,7 @@ class CognitiveEngine:
         for msg in history:
             lower = msg.lower()
 
-            # Preferences
+            # --- Preferences ---
             if "hate cluttered uis" in lower or "keep it minimal" in lower:
                 prefs.add("Prefers minimal, uncluttered UIs")
             if "prefer snake_case" in lower:
@@ -94,7 +97,6 @@ class CognitiveEngine:
             if "hate dark mode" in lower:
                 prefs.add("Dislikes dark mode in documentation")
 
-            # Tech stack / constraints as preferences
             if "postgresql" in lower:
                 prefs.add("Prefers PostgreSQL as primary database")
             if "must work on linux" in lower:
@@ -102,7 +104,7 @@ class CognitiveEngine:
             if "functional programming" in lower:
                 prefs.add("Favors functional programming style")
 
-            # Emotional patterns
+            # --- Emotional patterns ---
             if "anxious" in lower:
                 emotion_flags.append("anxiety around deadlines and work")
             if "impostor syndrome" in lower:
@@ -112,16 +114,16 @@ class CognitiveEngine:
             if "excited" in lower:
                 emotion_flags.append("excitement about projects and hackathons")
             if "calm and focused" in lower:
-                emotion_flags.append("ability to reach calm, focused state")
+                emotion_flags.append("ability to reach a calm, focused state")
 
-            # Facts
+            # --- Facts worth remembering ---
             if "my dog" in lower and "barnaby" in lower:
                 facts.add("Has a dog named Barnaby")
             if "i'm in seattle" in lower or "seattle (pst)" in lower:
                 facts.add("Lives in Seattle (PST)")
             if "senior dev" in lower:
                 facts.add("Is a Senior Developer")
-            if "etL" in lower:
+            if "need a python script for etl" in lower or "etl" in lower:
                 facts.add("Works with Python ETL scripts")
             if "project 'titanapi'" in lower:
                 facts.add("Working on a project called 'TitanAPI'")
@@ -143,7 +145,6 @@ class CognitiveEngine:
                 + ", but remains motivated and proud of progress."
             )
 
-        # Build structured profile
         profile = UserProfile(
             user_preferences=sorted(prefs),
             emotional_patterns=emotional_patterns,
@@ -163,12 +164,12 @@ class CognitiveEngine:
         return None
 
 # ============================================================
-# PERSONA ENGINE (NO LLM, TEMPLATE-BASED)
+# PERSONA ENGINE (TEMPLATE-BASED, NO LLM)
 # ============================================================
 def persona_rules(persona: str) -> str:
     return {
         "Calm Mentor": "Warm, calm, encouraging. Normalize struggles, give small steps.",
-        "Witty Peer": "Casual, playful, slightly sarcastic but kind.",
+        "Witty Friend": "Casual, playful, a bit cheeky but caring.",
         "Therapist-style Guide": "Reflect emotions, ask gentle questions, supportive.",
         "No-Nonsense CTO": "Direct, blunt about priorities, action-focused.",
         "Neutral": "Plain, factual, minimal style."
@@ -177,83 +178,81 @@ def persona_rules(persona: str) -> str:
 
 def generate_reply(user_msg: str, profile: UserProfile, persona: str = "Neutral") -> str:
     """
-    Simple handcrafted replies showing how persona & memory change tone.
-    No LLM calls – fully deterministic and error-free.
+    Simple handcrafted replies showing how GuppShupp’s persona & memory
+    change tone. No LLM calls – fully deterministic.
     """
 
-    # Short personalization from memory
     tail = ""
     if any("PostgreSQL" in p for p in profile.user_preferences):
-        tail += " Since you prefer PostgreSQL, keep data design in mind as you solve this."
+        tail += " Since you like PostgreSQL, keep your data design tight while you work through this."
     if any("Linux" in p for p in profile.user_preferences):
-        tail += " And remember, everything should behave well on Linux."
+        tail += " Also, remember everything should behave well on Linux."
     if "Has a dog named Barnaby" in profile.facts:
-        tail += " Also: don't forget to take a quick break, even Barnaby would approve."
+        tail += " And hey, maybe a quick break with Barnaby wouldn’t hurt."
 
-    base = user_msg.strip()
+    msg = user_msg.strip()
 
     if persona == "Neutral":
         return (
-            f"You said: \"{base}\"\n\n"
-            f"Given your preferences (short, practical answers), here's a simple next step you can take.\n"
-            f"1. Define the smallest concrete sub-task.\n"
-            f"2. Solve or debug just that piece first.\n"
-            f"3. Only then move to the next.\n"
+            f"You said: \"{msg}\"\n\n"
+            "Here’s a simple way forward:\n"
+            "1. Pick the smallest concrete sub-task.\n"
+            "2. Focus only on that until it’s done.\n"
+            "3. Then move to the next piece.\n"
             f"{tail}"
         )
 
     if persona == "Calm Mentor":
         return (
-            f"I hear you: \"{base}\".\n\n"
-            "You're clearly someone who cares about doing things well, and it's normal to feel pressure.\n"
-            "Here's a calm way to move forward:\n"
-            "1. Name the smallest part of the problem you can control right now.\n"
-            "2. Spend 25 focused minutes on just that.\n"
-            "3. At the end, write down what you learned or unblocked.\n"
+            f"GuppShupp hears you: \"{msg}\".\n\n"
+            "It makes sense to feel this way, especially with everything on your plate.\n"
+            "Let’s keep it gentle:\n"
+            "1. Name one tiny part of this that you can control right now.\n"
+            "2. Give it 20–25 focused minutes.\n"
+            "3. At the end, write down one win, no matter how small.\n"
             f"{tail}\n\n"
-            f"Emotionally, you often juggle anxiety and impostor syndrome, but you also show pride in progress—lean on that."
+            "From your patterns, you juggle anxiety and impostor feelings, but you also reach calm and feel proud of progress. Lean on that."
         )
 
-    if persona == "Witty Peer":
+    if persona == "Witty Friend":
         return (
-            f"So you’re dealing with: \"{base}\".\n\n"
-            "Classic Senior Dev vibes: 47 tabs open, 1 brain cell dedicated to Jira guilt.\n"
-            "Try this:\n"
-            "- Pick ONE tiny thing you can ship or debug in the next 30 minutes.\n"
-            "- Ignore everything else like it’s dark mode docs you hate.\n"
-            "- Ship it, then flex about it later.\n"
+            f"Okay, so you’re dealing with: \"{msg}\".\n\n"
+            "Classic overworked, under-caffeinated dev energy.\n"
+            "Here’s the GuppShupp hack:\n"
+            "- Pick ONE tiny thing you can fix or ship in the next 30 minutes.\n"
+            "- Ignore everything else like it’s dark-mode docs you hate.\n"
+            "- Ship it. Tiny wins beat big stress.\n"
             f"{tail}"
         )
 
     if persona == "Therapist-style Guide":
         return (
-            f"It sounds like you're saying: \"{base}\".\n\n"
-            "That tells me there's a mix of pressure, responsibility, and your own high standards.\n"
-            "A few questions to gently explore:\n"
-            "- What part of this feels most overwhelming right now?\n"
-            "- What have you already done that you’re proud of on this project?\n"
+            f"It sounds like you’re saying: \"{msg}\".\n\n"
+            "That tells me there’s a mix of pressure, responsibility, and your own high standards.\n"
+            "A few gentle questions:\n"
+            "- What part of this feels heaviest right now?\n"
+            "- What have you already done that you’re quietly proud of?\n"
             "- If you broke this into two smaller steps, what would they be?\n\n"
-            "From your history, you’ve handled anxiety around deadlines before and come out feeling calm and focused again.\n"
+            "Your history shows you’ve handled anxiety before and found your calm again.\n"
             f"{tail}"
         )
 
     if persona == "No-Nonsense CTO":
         return (
-            f"Input: \"{base}\".\n\n"
-            "Here’s the blunt version:\n"
-            "1. Define the outcome you need by end of day.\n"
-            "2. Kill everything that doesn’t serve that (tickets, scope, perfectionism).\n"
-            "3. Ship the smallest usable version.\n"
-            "4. Document follow-ups instead of trying to do them now.\n"
+            f"Input: \"{msg}\".\n\n"
+            "Here’s the ruthless version:\n"
+            "1. Decide what absolutely must be true by end of day.\n"
+            "2. Kill everything that doesn’t serve that (tickets, polish, ego).\n"
+            "3. Ship the smallest usable slice.\n"
+            "4. Log follow-ups instead of doing them now.\n"
             f"{tail}\n\n"
-            "You want to be a CTO – this is exactly the muscle: prioritization under pressure."
+            "You want to be a CTO. This is the muscle: prioritizing under pressure, not doing everything."
         )
 
-    # Fallback
-    return f"[{persona}] {base}"
+    return f"[{persona}] {msg}"
 
 # ============================================================
-# OPTIONAL: TEXT-TO-SPEECH (NETWORK-FREE IF gTTS WORKS)
+# TEXT-TO-SPEECH (OPTIONAL)
 # ============================================================
 def tts(text: str):
     try:
@@ -269,28 +268,46 @@ def tts(text: str):
 # MAIN APP
 # ============================================================
 def main():
-    st.title("🧠 NeuroSync — Agentic Memory & Personality Engine (Offline Demo)")
-    st.caption("No external APIs. Fully local. Designed to showcase memory + persona logic without errors.")
+    # Header with logo + brand
+    header_col1, header_col2 = st.columns([1, 4])
+
+    with header_col1:
+        # Put your logo file as "guppshupp_logo.png" in the same folder as app.py
+        try:
+            st.image("guppshupp_logo.png", width=72)
+        except Exception:
+            st.markdown("💬")
+
+    with header_col2:
+        st.markdown(
+            "<h1 style='margin-bottom:0;'>GuppShupp – Lifelong Friend</h1>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<p style='color:#d1d5db;'>A chat companion that remembers you, "
+            "adapts its personality, and keeps things short, real, and helpful.</p>",
+            unsafe_allow_html=True,
+        )
 
     brain = CognitiveEngine()
 
     # ---------------------------------------------------------
     # 1. MEMORY EXTRACTION
     # ---------------------------------------------------------
-    st.subheader("1. Extract Structured Memory from 30 Messages")
+    st.subheader("1. How GuppShupp Remembers You")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        with st.expander("📄 View Chat History"):
+        with st.expander("📄 See your 30-message story"):
             st.code(CHAT_HISTORY_30)
 
-        if st.button("🚀 Run Memory Extraction", use_container_width=True):
-            with st.spinner("Analyzing 30 messages with rule-based engine..."):
+        if st.button("🧠 Build Memory Profile", use_container_width=True):
+            with st.spinner("GuppShupp is quietly connecting the dots..."):
                 profile = brain.extract_profile(CHAT_HISTORY_30)
                 brain.save(profile)
                 st.session_state["profile"] = profile
-                st.success("✅ Memory extracted and saved (no APIs required).")
+                st.success("✅ Memory profile created (preferences, emotions, and key facts).")
 
     with col2:
         if "profile" not in st.session_state:
@@ -302,28 +319,28 @@ def main():
             p = st.session_state["profile"]
             st.markdown(f"""
             <div class="memory-card">
-                <h4>👤 Structured User Profile</h4>
-                <p><b>Preferences:</b> {", ".join(p.user_preferences)}</p>
-                <p><b>Emotional Patterns:</b> {p.emotional_patterns}</p>
-                <p><b>Facts Worth Remembering:</b> {", ".join(p.facts)}</p>
+                <h4>👤 What GuppShupp Learns About You</h4>
+                <p><b>Preferences:</b><br>{", ".join(p.user_preferences) or "Not enough data yet."}</p>
+                <p><b>Emotional Patterns:</b><br>{p.emotional_patterns}</p>
+                <p><b>Facts Worth Remembering:</b><br>{", ".join(p.facts) or "None extracted yet."}</p>
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("Click 'Run Memory Extraction' to build the profile.")
+            st.info("Click **Build Memory Profile** to let GuppShupp learn from the 30 messages.")
 
     st.divider()
 
     # ---------------------------------------------------------
     # 2. PERSONA ENGINE — BEFORE / AFTER
     # ---------------------------------------------------------
-    st.subheader("2. Persona Engine — Before vs After Response")
+    st.subheader("2. GuppShupp’s Personality Modes")
 
     persona = st.selectbox(
-        "Select persona:",
-        ["Calm Mentor", "Witty Peer", "Therapist-style Guide", "No-Nonsense CTO"]
+        "How should GuppShupp talk right now?",
+        ["Calm Mentor", "Witty Friend", "Therapist-style Guide", "No-Nonsense CTO"]
     )
 
-    user_msg = st.chat_input("Type something (e.g., 'I'm overwhelmed by Q4 deadlines')")
+    user_msg = st.chat_input("Tell GuppShupp what’s on your mind...")
 
     if user_msg and "profile" in st.session_state:
         profile = st.session_state["profile"]
@@ -335,17 +352,18 @@ def main():
 
         with left:
             with st.chat_message("assistant"):
-                st.markdown("### 🔹 Neutral Response")
+                st.markdown("### 🔹 Neutral GuppShupp")
                 st.write(neutral)
 
         with right:
             with st.chat_message("assistant"):
-                st.markdown(f"### 🔸 Persona: {persona}")
+                st.markdown(f"### 🔸 {persona} GuppShupp")
                 st.write(styled)
 
                 audio = tts(styled)
                 if audio:
                     st.audio(audio, format="audio/mp3")
+
 
 if __name__ == "__main__":
     main()
