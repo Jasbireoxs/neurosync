@@ -8,12 +8,12 @@ import io
 from huggingface_hub import InferenceClient
 
 # ============================================================
-#  UI CONFIG  (Old "NeuroSync-style" layout, branded for GuppShupp)
+#  UI CONFIG  (GuppShupp - Lifelong Friend)
 # ============================================================
 st.set_page_config(
     layout="wide",
-    page_title="GuppShupp – Cloud Agent",
-    page_icon="☁️"
+    page_title="GuppShupp - Lifelong Friend",
+    page_icon="💬"
 )
 
 st.markdown("""
@@ -67,6 +67,7 @@ class CognitiveEngine:
 
         for msg in history:
             lower = msg.lower()
+            # Preferences
             if "minimal" in lower:
                 prefs.add("Prefers minimal UIs")
             if "snake_case" in lower:
@@ -80,6 +81,7 @@ class CognitiveEngine:
             if "linux" in lower:
                 prefs.add("Linux user")
 
+            # Emotional patterns
             if "anxious" in lower:
                 emotion_flags.append("anxiety")
             if "impostor syndrome" in lower:
@@ -87,6 +89,7 @@ class CognitiveEngine:
             if "overwhelmed" in lower:
                 emotion_flags.append("overwhelmed")
 
+            # Facts
             if "barnaby" in lower:
                 facts.add("Has dog named Barnaby")
             if "seattle" in lower:
@@ -104,7 +107,7 @@ class CognitiveEngine:
             facts=sorted(facts)
         )
 
-    def save(self, p):
+    def save(self, p: UserProfile):
         with open(self.memory_file, "w") as f:
             f.write(p.model_dump_json(indent=2))
 
@@ -138,7 +141,7 @@ def generate_reply_cloud(user_msg: str, profile: UserProfile, persona: str) -> s
     ]
 
     system_text = f"""
-You are GuppShupp, a lifelong AI friend.
+You are GuppShupp - a lifelong AI friend.
 
 Persona: {persona}
 User Memory:
@@ -194,9 +197,30 @@ Adapt to their emotional patterns.
     return f"⚠️ All Models Failed. Please check your HF_TOKEN permissions. Last Error: {last_error}"
 
 # ============================================================
-# MAIN APP (Old UI + Before/After Comparison)
+# MAIN APP (Branding + Memory + Before/After Persona)
 # ============================================================
 def main():
+    # --- HEADER WITH LOGO + BRAND TEXT ---
+    header_col1, header_col2 = st.columns([1, 4])
+
+    with header_col1:
+        # Use the logo you uploaded to your repo.
+        # If the filename is different, change it here.
+        try:
+            st.image("guppshupp_logo.png", width=72)
+        except Exception:
+            st.markdown("💬")
+
+    with header_col2:
+        st.markdown(
+            "<h1 style='margin-bottom:0;'>GuppShupp - Lifelong Friend</h1>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<p style='color:#d1d5db; margin-top:4px;'>A cloud-backed companion that remembers you and adapts its personality.</p>",
+            unsafe_allow_html=True,
+        )
+
     # --- SIDEBAR ---
     with st.sidebar:
         st.title("⚙️ GuppShupp Controls")
@@ -214,14 +238,12 @@ def main():
         )
         enable_voice = st.toggle("🎙️ Enable Voice Output", value=False)
 
-    # --- MAIN HEADER ---
-    st.title("☁️ GuppShupp – Cloud Agent")
     st.markdown(
         """
-**Objective:**  
+**Assignment Goals:**  
 1. Extract structured memory from a 30-message history.  
 2. Use that memory to drive a cloud-backed Personality Engine.  
-3. Show how GuppShupp’s tone changes by persona.
+3. Show how GuppShupp’s tone changes by persona (before/after).
 """,
         unsafe_allow_html=True,
     )
@@ -278,7 +300,7 @@ def main():
 
     profile = st.session_state["profile"]
 
-    user_input = st.chat_input("Talk to GuppShupp (e.g., 'I’m stressed about Q4', 'I feel lonely tonight')")
+    user_input = st.chat_input("Tell GuppShupp what’s on your mind…")
 
     if user_input:
         # User message shown once
