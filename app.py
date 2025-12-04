@@ -239,12 +239,7 @@ def main():
         enable_voice = st.toggle("🎙️ Enable Voice Output", value=False)
 
     st.markdown(
-        """
-**Assignment Goals:**  
-1. Extract structured memory from a 30-message history.  
-2. Use that memory to drive a cloud-backed Personality Engine.  
-3. Show how GuppShupp’s tone changes by persona (before/after).
-""",
+,
         unsafe_allow_html=True,
     )
 
