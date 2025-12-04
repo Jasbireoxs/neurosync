@@ -101,7 +101,7 @@ class CognitiveEngine:
         return None
 
 # ============================================================
-# CLOUD AI ENGINE (FIXED: RAW TEXT GENERATION)
+# CLOUD AI ENGINE (FIXED: Microsoft Phi-3)
 # ============================================================
 @st.cache_resource
 def get_client():
@@ -116,13 +116,11 @@ def generate_reply_cloud(user_msg, profile, persona):
     if not client:
         return "⚠️ Error: HF_TOKEN not found in secrets. Please add your Hugging Face token."
 
-    # Mistral-7B works best with raw generation on the free tier
-    MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
+    # FIX: Using Microsoft Phi-3 (Stable on free tier)
+    MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
 
-    # We manually construct the prompt string (Raw Prompting)
-    # This bypasses the "Chat Model" restriction errors.
-    prompt_text = f"""[INST] 
-    You are GuppShupp, an AI assistant.
+    system_prompt = f"""
+    You are GuppShupp, a helpful AI assistant.
     Current Persona: {persona}
     
     USER DATA:
@@ -130,23 +128,23 @@ def generate_reply_cloud(user_msg, profile, persona):
     - Mood: {profile.emotional_patterns}
     - Facts: {', '.join(profile.facts)}
     
-    User Message: "{user_msg}"
-    
-    Task: Respond to the message using the Persona and User Data. Keep it concise.
-    [/INST]
+    INSTRUCTION:
+    Respond to the user's message using the Persona and User Data.
+    Keep it short and concise.
     """
 
     try:
-        # FIX: switched from chat.completions.create -> text_generation
-        response = client.text_generation(
+        # Phi-3 works perfectly with chat completion
+        response = client.chat_completion(
             model=MODEL_ID,
-            prompt=prompt_text,
-            max_new_tokens=200,
-            temperature=0.7,
-            do_sample=True,
-            stop_sequences=["[/INST]", "User:"]
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            max_tokens=200,
+            temperature=0.7
         )
-        return response.strip()
+        return response.choices[0].message.content
     except Exception as e:
         return f"⚠️ Cloud Error: {e}"
 
