@@ -101,7 +101,7 @@ class CognitiveEngine:
         return None
 
 # ============================================================
-# CLOUD AI ENGINE (SMART ROUTER)
+# CLOUD AI ENGINE (BULLETPROOF FALLBACKS)
 # ============================================================
 @st.cache_resource
 def get_client():
@@ -116,31 +116,28 @@ def generate_reply_cloud(user_msg, profile, persona):
         return "⚠️ Error: HF_TOKEN not found in secrets."
 
     # ------------------------------------------------------------
-    # SMART ROUTER CONFIG
-    # Defines which method to use for which model
+    # MODEL CONFIGURATION
+    # We try 4 models in order of likelihood to work on Free Tier
     # ------------------------------------------------------------
     MODELS_CONFIG = [
-        # TRY 1: Mistral Instruct (Must use Chat API)
-        {
-            "id": "mistralai/Mistral-7B-Instruct-v0.3",
-            "mode": "chat"
-        },
-        # TRY 2: Microsoft Phi-3 (Must use Text Gen API usually)
-        {
-            "id": "microsoft/Phi-3-mini-4k-instruct",
-            "mode": "chat" 
-        },
-        # TRY 3: Zephyr (Reliable Chat Model)
-        {
-            "id": "HuggingFaceH4/zephyr-7b-beta",
-            "mode": "chat"
-        }
+        # 1. Qwen 2.5 (Current SOTA, very high availability)
+        {"id": "Qwen/Qwen2.5-7B-Instruct", "mode": "chat"},
+        
+        # 2. Mistral v0.2 (Older = more stable availability than v0.3)
+        {"id": "mistralai/Mistral-7B-Instruct-v0.2", "mode": "text"},
+        
+        # 3. Google Flan-T5 (The "Safety Net" - almost always works)
+        {"id": "google/flan-t5-large", "mode": "text"},
+        
+        # 4. TinyLlama (Last resort, always free)
+        {"id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "mode": "text"}
     ]
 
+    # Standard Prompt
     system_text = f"""
     You are GuppShupp.
     Persona: {persona}
-    User Data: {profile.facts}
+    User Data: {', '.join(profile.facts)}
     Task: Reply to the user. Keep it short.
     """
 
@@ -149,33 +146,42 @@ def generate_reply_cloud(user_msg, profile, persona):
     for config in MODELS_CONFIG:
         model_id = config["id"]
         try:
-            # We attempt the CHAT method first as it is standard for these models
-            response = client.chat_completion(
-                model=model_id,
-                messages=[
-                    {"role": "system", "content": system_text},
-                    {"role": "user", "content": user_msg}
-                ],
-                max_tokens=200,
-                temperature=0.7
-            )
-            return response.choices[0].message.content
+            if config["mode"] == "chat":
+                # Chat Completion Method
+                response = client.chat_completion(
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": system_text},
+                        {"role": "user", "content": user_msg}
+                    ],
+                    max_tokens=200,
+                    temperature=0.7
+                )
+                return response.choices[0].message.content
 
-        except Exception as e:
-            # If Chat fails, we try Raw Text Generation as a Hail Mary
-            try:
-                raw_prompt = f"System: {system_text}\nUser: {user_msg}\nAssistant:"
+            else:
+                # Text Generation Method (Manual Prompting)
+                # We format it differently for Flan-T5 vs others
+                if "flan" in model_id:
+                    # Flan expects simple instructions
+                    raw_prompt = f"Instruction: Act as {persona}. User said: {user_msg}. Response:"
+                else:
+                    # Standard instruction format
+                    raw_prompt = f"System: {system_text}\nUser: {user_msg}\nAssistant:"
+
                 response = client.text_generation(
                     model=model_id,
                     prompt=raw_prompt,
                     max_new_tokens=200
                 )
                 return response
-            except Exception as e2:
-                last_error = f"{model_id} failed: {str(e)}"
-                continue
 
-    return f"⚠️ All Cloud Models failed. Last error: {last_error}. PLEASE CHECK YOUR HF_TOKEN PERMISSIONS."
+        except Exception as e:
+            # Log error internally and try next model
+            last_error = f"{model_id}: {str(e)}"
+            continue
+
+    return f"⚠️ All Models Failed. Please check your HF_TOKEN permissions. Last Error: {last_error}"
 
 # ============================================================
 # MAIN APP
@@ -219,7 +225,7 @@ def main():
             st.write(user_input)
             
         with st.chat_message("assistant"):
-            with st.spinner("Thinking (Smart Routing)..."):
+            with st.spinner("Thinking..."):
                 reply = generate_reply_cloud(user_input, p, persona)
                 st.write(reply)
                 
