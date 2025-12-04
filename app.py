@@ -116,8 +116,8 @@ def generate_reply_cloud(user_msg, profile, persona):
     if not client:
         return "⚠️ Error: HF_TOKEN not found in secrets. Please add your Hugging Face token."
 
-    # We use Zephyr-7b-beta because it's free, fast, and good at chat
-    MODEL_ID = "HuggingFaceH4/zephyr-7b-beta"
+    # FIX: Switched to Mistral-7B-Instruct (Highly reliable on free tier)
+    MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
 
     system_prompt = f"""
     You are GuppShupp.
