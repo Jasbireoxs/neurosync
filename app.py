@@ -239,7 +239,7 @@ def main():
         enable_voice = st.toggle("🎙️ Enable Voice Output", value=False)
 
     st.markdown(
-,
+
         unsafe_allow_html=True,
     )
 
