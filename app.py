@@ -8,7 +8,7 @@ import io
 from huggingface_hub import InferenceClient
 
 # ============================================================
-#  UI CONFIG
+#  UI CONFIG  (Old "NeuroSync-style" layout, branded for GuppShupp)
 # ============================================================
 st.set_page_config(
     layout="wide",
@@ -18,13 +18,11 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { background-color: #050814; color: #FAFAFA; }
-    .stButton>button { border-radius: 999px; font-weight: 600; 
-                       border: 1px solid #ff4b7a; background: #111827; }
-    .memory-card { background: #111827; padding: 20px; border-radius: 16px; 
-                   border-left: 5px solid #ff4b7a; 
-                   box-shadow: 0 8px 18px rgba(0,0,0,0.45); }
-    .stTextInput>div>div>input { background-color: #050814; color: #FAFAFA; }
+    .stApp { background-color: #0E1117; color: #FAFAFA; }
+    .stButton>button { border-radius: 8px; font-weight: bold; border: 1px solid #30363D; }
+    .memory-card { background-color: #1F2937; padding: 20px; border-radius: 10px;
+                   border-left: 5px solid #6366F1; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    .stTextInput>div>div>input { background-color: #161B22; color: #FAFAFA; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,14 +92,17 @@ class CognitiveEngine:
         )
 
     def save(self, p):
-        with open(self.memory_file, "w") as f: f.write(p.model_dump_json(indent=2))
+        with open(self.memory_file, "w") as f:
+            f.write(p.model_dump_json(indent=2))
+
     def load(self):
         if os.path.exists(self.memory_file):
-            with open(self.memory_file, "r") as f: return UserProfile(**json.load(f))
+            with open(self.memory_file, "r") as f:
+                return UserProfile(**json.load(f))
         return None
 
 # ============================================================
-# CLOUD AI ENGINE (BULLETPROOF FALLBACKS)
+# CLOUD AI ENGINE (HuggingFace InferenceClient)
 # ============================================================
 @st.cache_resource
 def get_client():
@@ -110,36 +111,31 @@ def get_client():
     except Exception:
         return None
 
-def generate_reply_cloud(user_msg, profile, persona):
+def generate_reply_cloud(user_msg, profile: UserProfile, persona: str):
     client = get_client()
     if not client:
         return "⚠️ Error: HF_TOKEN not found in secrets."
 
-    # ------------------------------------------------------------
-    # MODEL CONFIGURATION
-    # We try 4 models in order of likelihood to work on Free Tier
-    # ------------------------------------------------------------
     MODELS_CONFIG = [
-        # 1. Qwen 2.5 (Current SOTA, very high availability)
         {"id": "Qwen/Qwen2.5-7B-Instruct", "mode": "chat"},
-        
-        # 2. Mistral v0.2 (Older = more stable availability than v0.3)
         {"id": "mistralai/Mistral-7B-Instruct-v0.2", "mode": "text"},
-        
-        # 3. Google Flan-T5 (The "Safety Net" - almost always works)
         {"id": "google/flan-t5-large", "mode": "text"},
-        
-        # 4. TinyLlama (Last resort, always free)
         {"id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "mode": "text"}
     ]
 
-    # Standard Prompt
     system_text = f"""
-    You are GuppShupp.
-    Persona: {persona}
-    User Data: {', '.join(profile.facts)}
-    Task: Reply to the user. Keep it short.
-    """
+You are GuppShupp.
+Persona: {persona}
+User Memory:
+- Preferences: {', '.join(profile.user_preferences)}
+- Emotional Patterns: {profile.emotional_patterns}
+- Facts: {', '.join(profile.facts)}
+
+Task:
+Reply to the user in a way that fits the persona.
+Keep it short, respect their preferences (likes concise answers, minimal fluff),
+and adapt to their emotional patterns.
+"""
 
     last_error = ""
 
@@ -147,7 +143,6 @@ def generate_reply_cloud(user_msg, profile, persona):
         model_id = config["id"]
         try:
             if config["mode"] == "chat":
-                # Chat Completion Method
                 response = client.chat_completion(
                     model=model_id,
                     messages=[
@@ -160,14 +155,14 @@ def generate_reply_cloud(user_msg, profile, persona):
                 return response.choices[0].message.content
 
             else:
-                # Text Generation Method (Manual Prompting)
-                # We format it differently for Flan-T5 vs others
                 if "flan" in model_id:
-                    # Flan expects simple instructions
-                    raw_prompt = f"Instruction: Act as {persona}. User said: {user_msg}. Response:"
+                    raw_prompt = (
+                        f"Instruction: Act as {persona} called GuppShupp. "
+                        f"User context: {system_text} "
+                        f"User said: {user_msg}. Respond briefly and kindly."
+                    )
                 else:
-                    # Standard instruction format
-                    raw_prompt = f"System: {system_text}\nUser: {user_msg}\nAssistant:"
+                    raw_prompt = f"{system_text}\nUser: {user_msg}\nAssistant:"
 
                 response = client.text_generation(
                     model=model_id,
@@ -177,66 +172,125 @@ def generate_reply_cloud(user_msg, profile, persona):
                 return response
 
         except Exception as e:
-            # Log error internally and try next model
             last_error = f"{model_id}: {str(e)}"
             continue
 
     return f"⚠️ All Models Failed. Please check your HF_TOKEN permissions. Last Error: {last_error}"
 
 # ============================================================
-# MAIN APP
+# MAIN APP (Old UI structure)
 # ============================================================
 def main():
-    st.title("☁️ GuppShupp (Free Cloud Edition)")
-    
-    # 1. SIDEBAR CONFIG
+    # --- SIDEBAR ---
     with st.sidebar:
-        st.header("Setup")
-        if not get_client():
-            st.error("Missing HF_TOKEN")
-            st.info("Add HF_TOKEN to your Secrets.")
+        st.title("⚙️ GuppShupp Controls")
+
+        client = get_client()
+        if not client:
+            st.error("❌ HF_TOKEN missing or invalid")
+            st.info("Add HF_TOKEN in Streamlit Secrets to enable cloud replies.")
         else:
-            st.success("Cloud AI Connected")
-            
-        persona = st.selectbox("Persona", ["Calm Mentor", "Witty Friend", "No-Nonsense CTO"])
-        enable_voice = st.toggle("Voice Output")
+            st.success("✅ Connected to HuggingFace Cloud")
+
+        persona = st.selectbox(
+            "Select Persona",
+            ["Calm Mentor", "Witty Friend", "No-Nonsense CTO"]
+        )
+        enable_voice = st.toggle("🎙️ Enable Voice Output", value=False)
+
+    # --- MAIN HEADER ---
+    st.title("☁️ GuppShupp – Cloud Agent")
+    st.markdown(
+        """
+**Objective:**  
+1. Extract structured memory from a 30-message history.  
+2. Use that memory to drive a cloud-backed persona engine.  
+3. Show how GuppShupp adapts tone per persona.
+""",
+        unsafe_allow_html=True,
+    )
 
     brain = CognitiveEngine()
-    
-    # 2. MEMORY SECTION
-    if "profile" not in st.session_state:
-        st.info("Building Memory from 30-message history...")
-        p = brain.extract_profile(CHAT_HISTORY_30)
-        brain.save(p)
-        st.session_state["profile"] = p
-    
-    p = st.session_state["profile"]
-    with st.expander("👤 Extracted User Memory (Click to view)"):
-        st.json(p.model_dump())
 
-    # 3. CHAT SECTION
+    # ========================================================
+    # 1. COGNITIVE LAYER · MEMORY EXTRACTION
+    # ========================================================
+    st.subheader("1. Cognitive Layer · Memory Extraction")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        with st.expander("📄 View Input Data (30 Chat Logs)", expanded=False):
+            st.code(CHAT_HISTORY_30, language="python")
+
+        if st.button("🚀 Run Extraction Pipeline", use_container_width=True):
+            with st.spinner("Analyzing history & building user profile..."):
+                profile = brain.extract_profile(CHAT_HISTORY_30)
+                brain.save(profile)
+                st.session_state["profile"] = profile
+                st.success("✅ Memory extracted & persisted to disk")
+
+    with col2:
+        if "profile" not in st.session_state:
+            loaded = brain.load()
+            if loaded:
+                st.session_state["profile"] = loaded
+
+        if "profile" in st.session_state:
+            p = st.session_state["profile"]
+            st.markdown(f"""
+            <div class="memory-card">
+                <h4 style="margin-top:0;">👤 Structured User Profile</h4>
+                <p><b>❤️ Preferences:</b><br>{", ".join(p.user_preferences) or "None"}</p>
+                <p><b>🌊 Emotional Patterns:</b><br>{p.emotional_patterns}</p>
+                <p><b>📌 Facts:</b><br>{", ".join(p.facts) or "None"}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("Run the extraction pipeline to see the structured memory here.")
+
     st.divider()
-    st.subheader(f"Chatting as: {persona}")
-    
-    user_input = st.chat_input("Type a message...")
-    
+
+    # ========================================================
+    # 2. INTERACTION LAYER · PERSONA ENGINE
+    # ========================================================
+    st.subheader(f"2. Interaction Layer · {persona}")
+
+    if "profile" not in st.session_state:
+        st.warning("Please run the Memory Extraction first so GuppShupp knows you.")
+        return
+
+    profile = st.session_state["profile"]
+
+    user_input = st.chat_input("Talk to GuppShupp (e.g., 'I’m stressed about Q4', 'I feel lonely tonight')")
+
     if user_input:
+        # User message
         with st.chat_message("user"):
             st.write(user_input)
-            
+
+        # Assistant response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                reply = generate_reply_cloud(user_input, p, persona)
+            with st.spinner("GuppShupp is thinking in the cloud..."):
+                reply = generate_reply_cloud(user_input, profile, persona)
                 st.write(reply)
-                
+
                 if enable_voice:
                     try:
                         tts = gTTS(reply)
                         fp = io.BytesIO()
                         tts.write_to_fp(fp)
+                        fp.seek(0)
                         st.audio(fp, format="audio/mp3")
-                    except:
+                    except Exception:
                         pass
+
+        # X-Ray / Debug prompt injection
+        with st.expander("🛠️ X-Ray: Injected Memory & Persona"):
+            st.text(f"Persona: {persona}")
+            st.text(f"Preferences: {profile.user_preferences}")
+            st.text(f"Emotional Patterns: {profile.emotional_patterns}")
+            st.text(f"Facts: {profile.facts}")
 
 if __name__ == "__main__":
     main()
