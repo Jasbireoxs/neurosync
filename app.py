@@ -101,12 +101,11 @@ class CognitiveEngine:
         return None
 
 # ============================================================
-# CLOUD AI ENGINE (FAILSAFE MODE)
+# CLOUD AI ENGINE (SMART ROUTER)
 # ============================================================
 @st.cache_resource
 def get_client():
     try:
-        # Looks for HF_TOKEN in .streamlit/secrets.toml or Cloud Secrets
         return InferenceClient(token=st.secrets["HF_TOKEN"])
     except Exception:
         return None
@@ -114,56 +113,69 @@ def get_client():
 def generate_reply_cloud(user_msg, profile, persona):
     client = get_client()
     if not client:
-        return "⚠️ Error: HF_TOKEN not found in secrets. Please add your Hugging Face token."
+        return "⚠️ Error: HF_TOKEN not found in secrets."
 
     # ------------------------------------------------------------
-    # FALLBACK CHAIN
-    # We try 3 different models. If one is down/unsupported, 
-    # the code automatically tries the next one.
+    # SMART ROUTER CONFIG
+    # Defines which method to use for which model
     # ------------------------------------------------------------
-    MODELS_TO_TRY = [
-        "mistralai/Mistral-7B-Instruct-v0.2", # Very reliable
-        "HuggingFaceH4/zephyr-7b-beta",       # Good backup
-        "google/gemma-1.1-7b-it"              # Google's open model
+    MODELS_CONFIG = [
+        # TRY 1: Mistral Instruct (Must use Chat API)
+        {
+            "id": "mistralai/Mistral-7B-Instruct-v0.3",
+            "mode": "chat"
+        },
+        # TRY 2: Microsoft Phi-3 (Must use Text Gen API usually)
+        {
+            "id": "microsoft/Phi-3-mini-4k-instruct",
+            "mode": "chat" 
+        },
+        # TRY 3: Zephyr (Reliable Chat Model)
+        {
+            "id": "HuggingFaceH4/zephyr-7b-beta",
+            "mode": "chat"
+        }
     ]
 
-    # Raw prompt construction (Works for Text Gen & Chat models)
-    prompt_text = f"""[INST] 
-    You are GuppShupp, an AI assistant.
-    Current Persona: {persona}
-    
-    USER DATA:
-    - Preferences: {', '.join(profile.user_preferences)}
-    - Mood: {profile.emotional_patterns}
-    - Facts: {', '.join(profile.facts)}
-    
-    User Message: "{user_msg}"
-    
-    Task: Respond to the message using the Persona and User Data. Keep it concise.
-    [/INST]
+    system_text = f"""
+    You are GuppShupp.
+    Persona: {persona}
+    User Data: {profile.facts}
+    Task: Reply to the user. Keep it short.
     """
 
     last_error = ""
 
-    for model_id in MODELS_TO_TRY:
+    for config in MODELS_CONFIG:
+        model_id = config["id"]
         try:
-            # We use text_generation because it is the most universally supported method
-            response = client.text_generation(
+            # We attempt the CHAT method first as it is standard for these models
+            response = client.chat_completion(
                 model=model_id,
-                prompt=prompt_text,
-                max_new_tokens=200,
-                temperature=0.7,
-                do_sample=True,
-                stop_sequences=["[/INST]", "User:", "System:"]
+                messages=[
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": user_msg}
+                ],
+                max_tokens=200,
+                temperature=0.7
             )
-            # If successful, return immediately
-            return response.strip()
-        except Exception as e:
-            # If fail, log error and loop to next model
-            last_error = str(e)
-            continue
+            return response.choices[0].message.content
 
-    return f"⚠️ All Cloud Models failed. Last error: {last_error}"
+        except Exception as e:
+            # If Chat fails, we try Raw Text Generation as a Hail Mary
+            try:
+                raw_prompt = f"System: {system_text}\nUser: {user_msg}\nAssistant:"
+                response = client.text_generation(
+                    model=model_id,
+                    prompt=raw_prompt,
+                    max_new_tokens=200
+                )
+                return response
+            except Exception as e2:
+                last_error = f"{model_id} failed: {str(e)}"
+                continue
+
+    return f"⚠️ All Cloud Models failed. Last error: {last_error}. PLEASE CHECK YOUR HF_TOKEN PERMISSIONS."
 
 # ============================================================
 # MAIN APP
@@ -176,7 +188,7 @@ def main():
         st.header("Setup")
         if not get_client():
             st.error("Missing HF_TOKEN")
-            st.info("Add HF_TOKEN to your Secrets to enable the Cloud AI.")
+            st.info("Add HF_TOKEN to your Secrets.")
         else:
             st.success("Cloud AI Connected")
             
@@ -203,13 +215,11 @@ def main():
     user_input = st.chat_input("Type a message...")
     
     if user_input:
-        # Show User
         with st.chat_message("user"):
             st.write(user_input)
             
-        # Show AI (Cloud)
         with st.chat_message("assistant"):
-            with st.spinner("Thinking (Trying available Cloud Models)..."):
+            with st.spinner("Thinking (Smart Routing)..."):
                 reply = generate_reply_cloud(user_input, p, persona)
                 st.write(reply)
                 
